@@ -1,0 +1,27 @@
+# Binarios de Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build
+/bin/
+/build/
+/dist/
+
+# Variables de entorno
+.env
+.env.*
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# Windows
+Thumbs.db
+
+# Mac
+.DS_Store
