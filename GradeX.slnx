@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GradeX.Api/GradeX.Api.csproj" />
+    <Project Path="src/GradeX.Application/GradeX.Application.csproj" />
+    <Project Path="src/GradeX.Domain/GradeX.Domain.csproj" />
+    <Project Path="src/GradeX.Infrastructure/GradeX.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GradeX.Tests/GradeX.Tests.csproj" />
+  </Folder>
+</Solution>
