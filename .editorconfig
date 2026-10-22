@@ -1,0 +1,28 @@
+
+root = true
+
+[*.cs]
+indent_style = space
+indent_size = 4
+end_of_line = crlf
+charset = utf-8
+insert_final_newline = true
+
+# Organización
+dotnet_sort_system_directives_first = true
+
+# Análisis de calidad y seguridad
+dotnet_analyzer_diagnostic.category-Security.severity = warning
+dotnet_analyzer_diagnostic.category-Performance.severity = warning
+dotnet_analyzer_diagnostic.category-Maintainability.severity = warning
+
+# Mantener visible la regla de nombres; corregir ocurrencias, no suprimirla.
+dotnet_diagnostic.CA1707.severity = warning
+
+# Q-GATE 2026-10-22: excepción técnica limitada a la migración histórica
+# generada por EF Core. CA1861 es una regla de rendimiento sobre arreglos
+# constantes; el código pertenece a InitialSchema, no se regenera ni se edita
+# para evitar divergencias con el snapshot/designer y el historial aplicado.
+# No se excluye la carpeta Migrations ni se desactiva la regla globalmente.
+[src/GradeX.Infrastructure/Persistence/Migrations/20261019003256_InitialSchema.cs]
+dotnet_diagnostic.CA1861.severity = none
