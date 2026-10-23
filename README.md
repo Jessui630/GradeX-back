@@ -131,10 +131,10 @@ dotnet run --project src/GradeX.Api
 La API queda disponible en la URL configurada en `src/GradeX.Api/Properties/launchSettings.json`. El endpoint de salud permite comprobar que el host responde:
 
 ```text
-GET /health
+GET /api/health
 ```
 
-Las pruebas unitarias actuales no abren SQL Server ni inician el host HTTP.
+Las pruebas unitarias no abren SQL Server. La prueba de integración HTTP usa `WebApplicationFactory` y `TestServer`, y tampoco abre SQL Server.
 
 ## Pruebas
 
@@ -146,6 +146,7 @@ Pruebas incluidas actualmente:
 
 - Contrato del controlador de salud.
 - Contrato de la respuesta de salud y su versión.
+- Ruta HTTP `/api/health` mediante `WebApplicationFactory` y `TestServer`, sin SQL Server.
 
 ## Calidad de código
 
@@ -172,7 +173,25 @@ No se desactiva el análisis global ni se excluyen carpetas completas.
 
 `.github/workflows/quality.yml` se ejecuta en `push`, `pull_request` y `workflow_dispatch`. Usa el SDK seleccionado por `global.json`, no necesita LocalDB ni secretos personalizados, aplica el gate estricto y publica logs, SARIF y TRX como artefactos.
 
-`.github/workflows/deploy.yml` conserva el flujo de construcción y publicación de la imagen del backend. No se modifica desde el flujo de calidad.
+## Despliegue
+
+El despliegue actual todavía corresponde al backend Go heredado y no publica `GradeX.Api`:
+
+- `.github/workflows/deploy.yml` solo se ejecuta con `push` a `Sprint1` y publica `ghcr.io/jessui630/gradex-back:sprint1`.
+- El `Dockerfile` de la raíz compila `main.go` con Go y arranca `gradex-api`; no incluye el host ASP.NET Core.
+- El workflow no despliega en Azure ni configura la base de datos; únicamente publica la imagen.
+
+Para desplegar `GradeX.Api` con ASP.NET Core 10 será necesario:
+
+- Un Dockerfile multi-stage con SDK .NET 10 y runtime ASP.NET Core 10.
+- Publicar `src/GradeX.Api`, exponer el puerto `8080` y ejecutar con un usuario sin privilegios.
+- Inyectar `ConnectionStrings__GradeX` mediante variables de entorno o secretos; no incluir credenciales en la imagen.
+- Aplicar las migraciones EF Core en un paso separado, sin `Migrate()` al arrancar.
+- Configurar el healthcheck de la plataforma contra `/api/health`.
+- Actualizar `deploy.yml` (rama, registry, tag, entorno y permisos), fijar las acciones por SHA y retirar los artefactos Go cuando el corte esté verificado.
+- Excluir archivos locales no técnicos y artefactos de build del contexto Docker.
+
+`deploy.yml` y `Dockerfile` no se modifican en esta corrección.
 
 ## Seguridad y mantenimiento
 
