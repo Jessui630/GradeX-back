@@ -9,10 +9,31 @@
 /bin/
 /build/
 /dist/
+**/bin/
+**/obj/
 
-# Variables de entorno
+# .NET / Visual Studio local
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+**/TestResults/
+*.coverage
+*.coveragexml
+
+# Configuración local y secretos
 .env
 .env.*
+appsettings.*.local.json
+*.pfx
+*.snk
+secrets.json
+
+# Artefactos de base de datos locales
+*.mdf
+*.ldf
+*.bak
 
 # VS Code
 .vscode/
