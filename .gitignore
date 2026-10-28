@@ -35,6 +35,9 @@ secrets.json
 *.ldf
 *.bak
 
+# Artefactos generados de build y migraciones
+/artifacts/
+
 # VS Code
 .vscode/
 

@@ -1,0 +1,124 @@
+name: Verify GradeX.Api Azure configuration (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Escribe VERIFY para ejecutar solo el preflight read-only'
+        required: true
+        type: choice
+        options:
+          - 'no'
+          - 'VERIFY'
+        default: 'no'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-gradex-api
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: gradex-rg
+  AZURE_WEBAPP_NAME: GradeX-api
+  AZURE_PLAN_NAME: ASP-gradexrg-8bed
+  AZURE_LOCATION: westus
+  AZURE_SQL_SERVER: sql-gradex-students.database.windows.net
+  AZURE_SQL_DATABASE: GradeX_DevCloud
+  AZURE_RUNTIME: 'DOTNETCORE|10.0'
+
+jobs:
+  preflight:
+    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'VERIFY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout workflow actions
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate target constants and OIDC variables
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          for name in \
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            AZURE_RESOURCE_GROUP AZURE_WEBAPP_NAME \
+            AZURE_PLAN_NAME AZURE_LOCATION AZURE_SQL_SERVER AZURE_SQL_DATABASE \
+            AZURE_RUNTIME; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::Falta la variable $name." >&2
+              exit 1
+            fi
+          done
+          case "$AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME/$AZURE_PLAN_NAME/$AZURE_LOCATION/$AZURE_SQL_DATABASE" in
+            gradex-rg/GradeX-api/ASP-gradexrg-8bed/westus/GradeX_DevCloud) ;;
+            *)
+              echo "::error::Las constantes de destino no coinciden con la configuración revisada." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$AZURE_RUNTIME" != "DOTNETCORE|10.0" ]; then
+            echo "::error::El runtime esperado debe ser DOTNETCORE|10.0." >&2
+            exit 1
+          fi
+          if [ "$AZURE_SQL_SERVER" != "sql-gradex-students.database.windows.net" ]; then
+            echo "::error::El servidor SQL no coincide con el destino revisado." >&2
+            exit 1
+          fi
+          echo "Destino validado: $AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME plan=$AZURE_PLAN_NAME region=$AZURE_LOCATION runtime=$AZURE_RUNTIME"
+          echo "OIDC presente; no se imprimen IDs."
+
+      - name: Azure login with OIDC
+        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preflight (read-only, F1 code-only)
+        id: preflight
+        uses: ./.github/actions/appservice-f1-preflight
+        with:
+          resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+          webapp-name: ${{ env.AZURE_WEBAPP_NAME }}
+          plan-name: ${{ env.AZURE_PLAN_NAME }}
+          location: ${{ env.AZURE_LOCATION }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          sql-server: ${{ env.AZURE_SQL_SERVER }}
+          sql-database: ${{ env.AZURE_SQL_DATABASE }}
+          runtime: ${{ env.AZURE_RUNTIME }}
+          sql-firewall-check: 'true'
+
+      - name: Verification summary
+        if: always()
+        shell: bash
+        env:
+          RESULT: ${{ job.status }}
+          PLAN_SKU: ${{ steps.preflight.outputs.plan_sku }}
+          HOST: ${{ steps.preflight.outputs.host }}
+        run: |
+          set -euo pipefail
+          {
+            echo "### Verificación Azure read-only"
+            echo ""
+            echo "- Resultado: **$RESULT**"
+            echo "- App: \`$AZURE_WEBAPP_NAME\`"
+            echo "- Plan: \`$AZURE_PLAN_NAME\` (SKU: \`${PLAN_SKU:-no disponible}\`)"
+            echo "- Región: \`$AZURE_LOCATION\`"
+            echo "- Runtime: \`$AZURE_RUNTIME\`"
+            echo "- Host: \`${HOST:-no disponible}\`"
+            echo "- No se desplegó, reinició ni modificó ningún recurso."
+          } >> "$GITHUB_STEP_SUMMARY"

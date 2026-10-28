@@ -1,0 +1,400 @@
+name: Azure App Service F1 preflight
+description: >-
+  Read-only validation of an existing Linux code-only .NET 10 Web App hosted on
+  an existing App Service F1 (Free) plan. It rejects containers, paid plans,
+  missing managed identities, inconsistent run-from-package settings, an invalid
+  single Azure SQL managed-identity connection string and incomplete SQL firewall
+  rules for the app outbound IPs.
+
+inputs:
+  resource-group:
+    description: Existing resource group that contains the plan, the Web App and the SQL server.
+    required: true
+  webapp-name:
+    description: Existing Linux code-only Web App to validate.
+    required: true
+  plan-name:
+    description: Existing App Service plan that must be F1/Free.
+    required: true
+  location:
+    description: Expected normalized Azure region, for example westus.
+    required: true
+  tenant-id:
+    description: Expected Microsoft Entra tenant ID for the OIDC session.
+    required: true
+  subscription-id:
+    description: Expected Azure subscription ID for the OIDC session.
+    required: true
+  sql-server:
+    description: Expected Azure SQL logical server hostname.
+    required: true
+  sql-database:
+    description: Expected Azure SQL database name.
+    required: true
+  runtime:
+    description: Expected linuxFxVersion.
+    required: false
+    default: 'DOTNETCORE|10.0'
+  sql-firewall-check:
+    description: >-
+      When true, requires every possible outbound IP of the app to be covered by
+      a specific SQL firewall rule. Broad 0.0.0.0 rules are reported but are not
+      accepted as coverage for the new app. Disable only with an explicitly
+      approved network exception.
+    required: false
+    default: 'true'
+
+outputs:
+  host:
+    description: Default HTTPS hostname of the validated Web App.
+    value: ${{ steps.preflight.outputs.host }}
+  principal_id:
+    description: Principal ID of the app system-assigned managed identity.
+    value: ${{ steps.preflight.outputs.principal_id }}
+  plan_sku:
+    description: Validated App Service plan SKU.
+    value: ${{ steps.preflight.outputs.plan_sku }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate existing F1 code-only app (read-only)
+      id: preflight
+      shell: bash
+      env:
+        RESOURCE_GROUP: ${{ inputs.resource-group }}
+        WEBAPP_NAME: ${{ inputs.webapp-name }}
+        PLAN_NAME: ${{ inputs.plan-name }}
+        EXPECTED_LOCATION: ${{ inputs.location }}
+        EXPECTED_TENANT_ID: ${{ inputs.tenant-id }}
+        EXPECTED_SUBSCRIPTION_ID: ${{ inputs.subscription-id }}
+        SQL_SERVER: ${{ inputs.sql-server }}
+        SQL_DATABASE: ${{ inputs.sql-database }}
+        EXPECTED_RUNTIME: ${{ inputs.runtime }}
+        SQL_FIREWALL_CHECK: ${{ inputs.sql-firewall-check }}
+      run: |
+        set -euo pipefail
+
+        fail() {
+          echo "::error::$*" >&2
+          exit 1
+        }
+
+        normalize() {
+          printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
+        }
+
+        ip_to_int() {
+          local ip="$1" a b c d
+          IFS=. read -r a b c d <<<"$ip" || return 1
+          [ -n "$a" ] && [ -n "$b" ] && [ -n "$c" ] && [ -n "$d" ] || return 1
+          [[ "$a" =~ ^[0-9]{1,3}$ ]] || return 1
+          [[ "$b" =~ ^[0-9]{1,3}$ ]] || return 1
+          [[ "$c" =~ ^[0-9]{1,3}$ ]] || return 1
+          [[ "$d" =~ ^[0-9]{1,3}$ ]] || return 1
+          a=$((10#$a))
+          b=$((10#$b))
+          c=$((10#$c))
+          d=$((10#$d))
+          [ "$a" -le 255 ] && [ "$b" -le 255 ] && [ "$c" -le 255 ] && [ "$d" -le 255 ] || return 1
+          printf '%s' "$(( (a << 24) + (b << 16) + (c << 8) + d ))"
+        }
+
+        for value in \
+          "$RESOURCE_GROUP" "$WEBAPP_NAME" "$PLAN_NAME" "$EXPECTED_LOCATION" \
+          "$EXPECTED_TENANT_ID" "$EXPECTED_SUBSCRIPTION_ID" "$SQL_SERVER" \
+          "$SQL_DATABASE" "$EXPECTED_RUNTIME"; do
+          if [ -z "$value" ]; then
+            fail "Un input obligatorio del preflight está vacío."
+          fi
+        done
+
+        firewall_check="$(normalize "$SQL_FIREWALL_CHECK")"
+        case "$firewall_check" in
+          true|1|false|0) ;;
+          *) fail "sql-firewall-check debe ser true o false." ;;
+        esac
+
+        if [[ "$(normalize "$SQL_SERVER")" != *.database.windows.net ]]; then
+          fail "sql-server debe ser un hostname *.database.windows.net."
+        fi
+
+        account_json="$(az account show --query '{id:id,tenantId:tenantId}' -o json)"
+        account_id="$(jq -r '.id // empty' <<<"$account_json")"
+        account_tenant="$(jq -r '.tenantId // empty' <<<"$account_json")"
+        if [ "$(normalize "$account_id")" != "$(normalize "$EXPECTED_SUBSCRIPTION_ID")" ]; then
+          fail "La sesión OIDC no corresponde a la suscripción esperada."
+        fi
+        if [ "$(normalize "$account_tenant")" != "$(normalize "$EXPECTED_TENANT_ID")" ]; then
+          fail "La sesión OIDC no corresponde al tenant esperado."
+        fi
+
+        az group show --name "$RESOURCE_GROUP" --query id -o tsv >/dev/null
+
+        plan_json="$(az appservice plan show --resource-group "$RESOURCE_GROUP" --name "$PLAN_NAME" -o json)"
+        plan_sku="$(jq -r '.sku.name // empty' <<<"$plan_json")"
+        plan_tier="$(jq -r '.sku.tier // empty' <<<"$plan_json")"
+        plan_location="$(normalize "$(jq -r '.location // empty' <<<"$plan_json")")"
+        plan_reserved="$(normalize "$(jq -r '.reserved // false' <<<"$plan_json")")"
+        plan_workers="$(jq -r '.numberOfWorkers // 0' <<<"$plan_json")"
+        plan_max_workers="$(jq -r '.maximumNumberOfWorkers // 0' <<<"$plan_json")"
+        plan_per_site_scaling="$(normalize "$(jq -r '.perSiteScaling // false' <<<"$plan_json")")"
+        plan_elastic="$(normalize "$(jq -r '.elasticScaleEnabled // false' <<<"$plan_json")")"
+        plan_zone_redundant="$(normalize "$(jq -r '.zoneRedundant // false' <<<"$plan_json")")"
+
+        if [ "$(printf '%s' "$plan_sku" | tr '[:lower:]' '[:upper:]')" != "F1" ]; then
+          fail "El plan '$PLAN_NAME' no es F1 (sku=$plan_sku). El despliegue se detiene: no se permiten planes de pago."
+        fi
+        if [ "$(normalize "$plan_tier")" != "free" ]; then
+          fail "El plan '$PLAN_NAME' no es Free (tier=$plan_tier). El despliegue se detiene."
+        fi
+        if [ "$plan_location" != "$(normalize "$EXPECTED_LOCATION")" ]; then
+          fail "El plan '$PLAN_NAME' no está en la región esperada (location=$plan_location)."
+        fi
+        if [ "$plan_reserved" != "true" ]; then
+          fail "El plan '$PLAN_NAME' no es Linux (reserved=$plan_reserved)."
+        fi
+        if [ "$plan_workers" != "1" ] || [ "$plan_max_workers" != "1" ]; then
+          fail "El plan '$PLAN_NAME' no tiene una única instancia F1 (workers=$plan_workers, max=$plan_max_workers)."
+        fi
+        if [ "$plan_per_site_scaling" != "false" ] || [ "$plan_elastic" != "false" ] || [ "$plan_zone_redundant" != "false" ]; then
+          fail "El plan '$PLAN_NAME' tiene escalado o redundancia incompatibles con F1."
+        fi
+
+        app_json="$(az webapp show --resource-group "$RESOURCE_GROUP" --name "$WEBAPP_NAME" -o json)"
+        app_state="$(jq -r '.state // empty' <<<"$app_json")"
+        app_kind="$(normalize "$(jq -r '.kind // empty' <<<"$app_json")")"
+        app_location="$(normalize "$(jq -r '.location // empty' <<<"$app_json")")"
+        app_server_farm="$(jq -r '.serverFarmId // empty' <<<"$app_json")"
+        app_https_only="$(normalize "$(jq -r '.httpsOnly // false' <<<"$app_json")")"
+        app_reserved="$(normalize "$(jq -r '.reserved // false' <<<"$app_json")")"
+        app_linux_fx="$(jq -r '.siteConfig.linuxFxVersion // empty' <<<"$app_json")"
+        app_windows_fx="$(normalize "$(jq -r '.siteConfig.windowsFxVersion // empty' <<<"$app_json")")"
+        app_command_line="$(normalize "$(jq -r '.siteConfig.appCommandLine // empty' <<<"$app_json")")"
+        app_always_on="$(normalize "$(jq -r '.siteConfig.alwaysOn // false' <<<"$app_json")")"
+        app_min_tls="$(jq -r '.siteConfig.minTlsVersion // empty' <<<"$app_json")"
+        app_ftps="$(normalize "$(jq -r '.siteConfig.ftpsState // empty' <<<"$app_json")")"
+        app_http20="$(normalize "$(jq -r '.siteConfig.http20Enabled // false' <<<"$app_json")")"
+        app_remote_debug="$(normalize "$(jq -r '.siteConfig.remoteDebuggingEnabled // false' <<<"$app_json")")"
+        app_identity_type="$(jq -r '.identity.type // empty' <<<"$app_json")"
+        app_principal_id="$(jq -r '.identity.principalId // empty' <<<"$app_json")"
+        app_host="$(jq -r '.defaultHostName // empty' <<<"$app_json")"
+
+        if [ "$app_state" != "Running" ]; then
+          fail "El App Service '$WEBAPP_NAME' no está en estado Running (state=$app_state)."
+        fi
+        if [ "$app_https_only" != "true" ]; then
+          fail "HTTPS Only debe estar habilitado en '$WEBAPP_NAME'."
+        fi
+        case ",$app_kind," in
+          *,container,*)
+            fail "El App Service '$WEBAPP_NAME' es container/sitecontainers (kind=$app_kind). Este workflow solo admite Linux code-only."
+            ;;
+        esac
+        case ",$app_kind," in
+          *,linux,*) ;;
+          *) fail "El App Service '$WEBAPP_NAME' no es Linux (kind=$app_kind)." ;;
+        esac
+        if [ "$app_location" != "$(normalize "$EXPECTED_LOCATION")" ]; then
+          fail "El App Service '$WEBAPP_NAME' no está en la región esperada (location=$app_location)."
+        fi
+        if [ "$(normalize "${app_server_farm##*/}")" != "$(normalize "$PLAN_NAME")" ]; then
+          fail "El App Service '$WEBAPP_NAME' no está asociado al plan '$PLAN_NAME'."
+        fi
+        if [ "$app_reserved" != "true" ]; then
+          fail "El App Service '$WEBAPP_NAME' no es Linux (reserved=$app_reserved)."
+        fi
+        if [ -n "$app_windows_fx" ]; then
+          fail "El App Service '$WEBAPP_NAME' declara windowsFxVersion ('$app_windows_fx'); se exige Linux code-only."
+        fi
+        if [ -n "$app_command_line" ]; then
+          fail "El App Service '$WEBAPP_NAME' tiene appCommandLine configurado; el ZIP ya es el ejecutable."
+        fi
+        if [ "$(printf '%s' "$app_linux_fx" | tr '[:lower:]' '[:upper:]')" != "$(printf '%s' "$EXPECTED_RUNTIME" | tr '[:lower:]' '[:upper:]')" ]; then
+          case "$(printf '%s' "$app_linux_fx" | tr '[:lower:]' '[:upper:]')" in
+            DOCKER*|COMPOSE*|SITECONTAINERS*)
+              fail "linuxFxVersion indica contenedor ('$app_linux_fx'). Se requiere $EXPECTED_RUNTIME."
+              ;;
+            *)
+              fail "linuxFxVersion no es $EXPECTED_RUNTIME (valor='$app_linux_fx')."
+              ;;
+          esac
+        fi
+        if [ "$app_always_on" != "false" ]; then
+          fail "Always On debe estar deshabilitado en F1 (alwaysOn=$app_always_on)."
+        fi
+        case "$app_min_tls" in
+          1.2|1.3) ;;
+          *) fail "TLS mínimo debe ser 1.2 o 1.3 (valor='$app_min_tls')." ;;
+        esac
+        case "$app_ftps" in
+          disabled|ftpsonly) ;;
+          *) fail "FTPS debe estar Disabled o FtpsOnly (valor='$app_ftps')." ;;
+        esac
+        if [ "$app_http20" != "true" ]; then
+          fail "HTTP/2 debe estar habilitado en '$WEBAPP_NAME'."
+        fi
+        if [ "$app_remote_debug" != "false" ]; then
+          fail "Remote debugging debe estar deshabilitado en '$WEBAPP_NAME'."
+        fi
+        if [ -z "$app_host" ] || [[ "$app_host" != *.azurewebsites.net ]]; then
+          fail "El App Service no tiene un defaultHostName *.azurewebsites.net válido."
+        fi
+        if [ "$(normalize "$app_identity_type")" != "systemassigned" ]; then
+          fail "El App Service '$WEBAPP_NAME' debe tener identidad system-assigned exclusiva (type='$app_identity_type')."
+        fi
+        if ! [[ "$app_principal_id" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+          fail "El App Service '$WEBAPP_NAME' no expone un principalId válido."
+        fi
+
+        settings_json="$(az webapp config appsettings list --resource-group "$RESOURCE_GROUP" --name "$WEBAPP_NAME" -o json)"
+        setting_value() {
+          jq -r --arg name "$1" '.[] | select(.name == $name) | .value // empty' <<<"$settings_json"
+        }
+        setting_names="$(jq -r '.[].name' <<<"$settings_json")"
+
+        connection_names="$(printf '%s\n' "$setting_names" | awk '/^ConnectionStrings__/ {print}')"
+        connection_count="$(printf '%s\n' "$connection_names" | sed '/^$/d' | wc -l | tr -d ' ')"
+        if [ "$connection_count" != "1" ] || [ "$(printf '%s\n' "$connection_names" | sed '/^$/d')" != "ConnectionStrings__GradeX" ]; then
+          fail "Debe existir exactamente un App Setting de conexión, 'ConnectionStrings__GradeX'."
+        fi
+        for setting_name in WEBSITE_RUN_FROM_PACKAGE ASPNETCORE_FORWARDEDHEADERS_ENABLED ASPNETCORE_ENVIRONMENT; do
+          if ! grep -qx "$setting_name" <<<"$setting_names"; then
+            fail "Falta el App Setting '$setting_name'."
+          fi
+        done
+
+        run_from_package="$(setting_value WEBSITE_RUN_FROM_PACKAGE)"
+        if [ "$run_from_package" != "1" ]; then
+          fail "WEBSITE_RUN_FROM_PACKAGE debe ser 1 (no una URL) para el despliegue ZIP atómico; con este modo no se usa --clean true."
+        fi
+        forwarded_headers="$(setting_value ASPNETCORE_FORWARDEDHEADERS_ENABLED)"
+        if [ "$(normalize "$forwarded_headers")" != "true" ]; then
+          fail "ASPNETCORE_FORWARDEDHEADERS_ENABLED debe ser true."
+        fi
+        environment_name="$(setting_value ASPNETCORE_ENVIRONMENT)"
+        if [ "$(normalize "$environment_name")" != "production" ]; then
+          fail "ASPNETCORE_ENVIRONMENT debe ser Production."
+        fi
+        scm_build="$(setting_value SCM_DO_BUILD_DURING_DEPLOYMENT)"
+        if [ "$(normalize "$scm_build")" = "true" ] || [ "$(normalize "$scm_build")" = "1" ]; then
+          fail "SCM_DO_BUILD_DURING_DEPLOYMENT debe estar deshabilitado: el ZIP ya está compilado."
+        fi
+
+        connection_string="$(setting_value ConnectionStrings__GradeX)"
+        if [ -z "$connection_string" ]; then
+          fail "ConnectionStrings__GradeX está vacío."
+        fi
+        if grep -Eiq '(^|;)[[:space:]]*(Password|Pwd)[[:space:]]*=' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX contiene Password/Pwd; debe usar managed identity."
+        fi
+        if grep -Eiq '(^|;)[[:space:]]*(User[[:space:]]*ID|UID)[[:space:]]*=' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX contiene User ID; se exige identidad system-assigned sin User ID."
+        fi
+        if grep -Eiq '(Integrated Security|Trusted_Connection)[[:space:]]*=' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX no debe usar autenticación integrada."
+        fi
+        if grep -Eiq 'Access[[:space:]]+Token[[:space:]]*=' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX no debe contener Access Token."
+        fi
+        server_pattern="Server[[:space:]]*=[[:space:]]*tcp:${SQL_SERVER//./\\.},1433"
+        if ! grep -Eiq "$server_pattern" <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX no apunta al servidor SQL esperado."
+        fi
+        database_pattern="Database[[:space:]]*=[[:space:]]*${SQL_DATABASE}"
+        if ! grep -Eiq "$database_pattern" <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX no apunta a la base esperada."
+        fi
+        if ! grep -Eiq 'Authentication[[:space:]]*=[[:space:]]*Active Directory Managed Identity' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX no usa Authentication=Active Directory Managed Identity."
+        fi
+        if ! grep -Eiq 'Encrypt[[:space:]]*=[[:space:]]*True' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX debe usar Encrypt=True."
+        fi
+        if ! grep -Eiq 'TrustServerCertificate[[:space:]]*=[[:space:]]*False' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX debe usar TrustServerCertificate=False."
+        fi
+        if ! grep -Eiq 'Pooling[[:space:]]*=[[:space:]]*False' <<<"$connection_string"; then
+          fail "ConnectionStrings__GradeX debe usar Pooling=False para el SQL Free."
+        fi
+
+        if [ "$firewall_check" = "true" ] || [ "$firewall_check" = "1" ]; then
+          sql_server_name="${SQL_SERVER%%.*}"
+          outbound_raw="$(jq -r '.possibleOutboundIpAddresses // empty' <<<"$app_json")"
+          if [ -z "$outbound_raw" ]; then
+            outbound_raw="$(jq -r '.outboundIpAddresses // empty' <<<"$app_json")"
+          fi
+          outbound_ips="$(printf '%s' "$outbound_raw" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | sed '/^$/d' | sort -u)"
+          outbound_count="$(printf '%s\n' "$outbound_ips" | sed '/^$/d' | wc -l | tr -d ' ')"
+          if [ "$outbound_count" -eq 0 ]; then
+            fail "No se pudieron obtener las IP de salida de '$WEBAPP_NAME'; no se puede validar el firewall SQL."
+          fi
+
+          rules_json="$(az sql server firewall-rule list --resource-group "$RESOURCE_GROUP" --server "$sql_server_name" -o json)" \
+            || fail "No se pudo leer el firewall de '$sql_server_name'. La identidad OIDC necesita lectura sobre el servidor SQL."
+          if ! jq -e 'type == "array"' >/dev/null <<<"$rules_json"; then
+            fail "La respuesta del firewall SQL no es una lista JSON."
+          fi
+
+          rule_names=()
+          rule_starts=()
+          rule_ends=()
+          broad_rule_names=""
+          while IFS=$'\t' read -r rule_name rule_start rule_end; do
+            [ -z "$rule_name" ] && continue
+            rule_start_int="$(ip_to_int "$rule_start")" || fail "La regla SQL '$rule_name' tiene una IP inicial inválida."
+            rule_end_int="$(ip_to_int "$rule_end")" || fail "La regla SQL '$rule_name' tiene una IP final inválida."
+            if [ "$rule_start_int" -gt "$rule_end_int" ]; then
+              fail "La regla SQL '$rule_name' tiene un rango invertido."
+            fi
+            if [ "$rule_start_int" -eq 0 ] && { [ "$rule_end_int" -eq 0 ] || [ "$rule_end_int" -eq 4294967295 ]; }; then
+              broad_rule_names="${broad_rule_names}${rule_name} "
+              continue
+            fi
+            rule_names+=("$rule_name")
+            rule_starts+=("$rule_start_int")
+            rule_ends+=("$rule_end_int")
+          done < <(jq -r '.[] | [.name, .startIpAddress, .endIpAddress] | @tsv' <<<"$rules_json")
+
+          rule_count="${#rule_names[@]}"
+          if [ "$rule_count" -eq 0 ]; then
+            fail "El servidor SQL '$sql_server_name' no tiene reglas específicas para '$WEBAPP_NAME'."
+          fi
+
+          missing_ips=""
+          while IFS= read -r outbound_ip; do
+            [ -z "$outbound_ip" ] && continue
+            outbound_int="$(ip_to_int "$outbound_ip")" || fail "La IP de salida '$outbound_ip' no es IPv4 válida."
+            covered=0
+            for index in "${!rule_starts[@]}"; do
+              if [ "$outbound_int" -ge "${rule_starts[$index]}" ] && [ "$outbound_int" -le "${rule_ends[$index]}" ]; then
+                covered=1
+                break
+              fi
+            done
+            if [ "$covered" -eq 0 ]; then
+              missing_ips="${missing_ips}${outbound_ip} "
+            fi
+          done <<<"$outbound_ips"
+          if [ -n "$missing_ips" ]; then
+            fail "Faltan reglas de firewall SQL específicas para las IP de salida de '$WEBAPP_NAME': $missing_ips"
+          fi
+          if [ -n "$broad_rule_names" ]; then
+            echo "::warning::El servidor SQL '$sql_server_name' tiene reglas amplias que no se aceptan como cobertura de la nueva app: $broad_rule_names No se eliminan en esta fase; revisar su impacto antes de retirarlas."
+          fi
+          echo "Firewall SQL verificado: $outbound_count IP(s) de salida cubiertas por $rule_count regla(s) específica(s); reglas amplias detectadas='${broad_rule_names:-ninguna}'."
+        else
+          echo "::warning::La validación del firewall SQL se omitió por 'sql-firewall-check=false'. Requiere una excepción de red aprobada."
+        fi
+
+        if [ -n "${GITHUB_OUTPUT:-}" ]; then
+          {
+            echo "host=$app_host"
+            echo "principal_id=$app_principal_id"
+            echo "plan_sku=$plan_sku"
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+        echo "Preflight OK: app=$WEBAPP_NAME plan=$PLAN_NAME sku=$plan_sku/$plan_tier location=$plan_location"
+        echo "Runtime=$app_linux_fx state=$app_state httpsOnly=$app_https_only identity=SystemAssigned host=$app_host"
+        echo "Conexión única=ConnectionStrings__GradeX (managed identity, sin contraseña); WEBSITE_RUN_FROM_PACKAGE=1."

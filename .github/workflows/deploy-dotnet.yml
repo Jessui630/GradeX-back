@@ -1,0 +1,332 @@
+name: Deploy GradeX.Api to Azure App Service (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Escribe DEPLOY para confirmar el despliegue manual'
+        required: true
+        type: choice
+        options:
+          - 'no'
+          - 'DEPLOY'
+        default: 'no'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-gradex-api
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: gradex-rg
+  AZURE_WEBAPP_NAME: GradeX-api
+  AZURE_PLAN_NAME: ASP-gradexrg-8bed
+  AZURE_LOCATION: westus
+  AZURE_SQL_SERVER: sql-gradex-students.database.windows.net
+  AZURE_SQL_DATABASE: GradeX_DevCloud
+  AZURE_RUNTIME: 'DOTNETCORE|10.0'
+  ARTIFACT_NAME: gradex-api
+
+jobs:
+  quality:
+    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'DEPLOY' }}
+    uses: ./.github/workflows/quality.yml
+
+  package:
+    needs: quality
+    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore API project
+        run: dotnet restore src/GradeX.Api/GradeX.Api.csproj --nologo
+
+      - name: Publish GradeX.Api in Release
+        run: >
+          dotnet publish src/GradeX.Api/GradeX.Api.csproj
+          --configuration Release
+          --no-restore
+          --output "$RUNNER_TEMP/publish"
+          --nologo
+          -p:UseAppHost=false
+
+      - name: Remove development-only files from publish output
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish="$RUNNER_TEMP/publish"
+          find "$publish" -type f \( \
+            -name '*.pdb' -o \
+            -name 'web.config' -o \
+            -name 'appsettings.Development.json' -o \
+            -name '*.user' -o \
+            -name '.env' \
+          \) -delete
+
+      - name: Validate publish output
+        shell: bash
+        run: |
+          set -euo pipefail
+          publish="$RUNNER_TEMP/publish"
+
+          test -f "$publish/GradeX.Api.dll"
+          test -f "$publish/GradeX.Api.deps.json"
+          test -f "$publish/GradeX.Api.runtimeconfig.json"
+          test ! -e "$publish/appsettings.Development.json"
+          test ! -e "$publish/web.config"
+          if find "$publish" -type f -name '*.pdb' -print -quit | grep -q .; then
+            echo "El publish contiene archivos PDB." >&2
+            exit 1
+          fi
+
+          if find "$publish" -type f \( \
+            -name '*.cs' -o -name '*.csproj' -o -name '*.sln' -o -name '*.slnx' \
+            -o -name '*.go' -o -name '*.mod' -o -name '*.sum' \
+            -o -name '*.pfx' -o -name '*.snk' -o -iname '*secret*' \
+          \) -print -quit | grep -q .; then
+            echo "El publish contiene archivos fuente o material sensible." >&2
+            exit 1
+          fi
+
+          if ! jq -e '.runtimeOptions.tfm == "net10.0"' \
+            "$publish/GradeX.Api.runtimeconfig.json" >/dev/null; then
+            echo "El runtime del publish no es net10.0." >&2
+            exit 1
+          fi
+
+          if grep -Eiq 'connectionstrings|password=|server=tcp:' "$publish/appsettings.json"; then
+            echo "appsettings.json contiene una cadena de conexión o un secreto." >&2
+            exit 1
+          fi
+
+          echo "Publish validado: GradeX.Api.dll, net10.0 y sin secretos."
+
+      - name: Create ZIP artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/publish"
+          # Nombres relativos a la raíz del publish, sin prefijo './'.
+          find . -type f -printf '%P\n' | sort | zip -X -q "$RUNNER_TEMP/gradex-api.zip" -@
+
+      - name: Create checksum and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          zip_sha="$(sha256sum gradex-api.zip | awk '{print $1}')"
+          zip_bytes="$(stat -c%s gradex-api.zip)"
+          entry_count="$(unzip -Z1 gradex-api.zip | wc -l | tr -d ' ')"
+          created_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          sha256sum gradex-api.zip > gradex-api.sha256
+          jq -n \
+            --arg artifactName "$ARTIFACT_NAME" \
+            --arg app "$AZURE_WEBAPP_NAME" \
+            --arg resourceGroup "$AZURE_RESOURCE_GROUP" \
+            --arg plan "$AZURE_PLAN_NAME" \
+            --arg location "$AZURE_LOCATION" \
+            --arg runtime "$AZURE_RUNTIME" \
+            --arg workflow "$GITHUB_WORKFLOW" \
+            --arg ref "$GITHUB_REF" \
+            --arg commit "$GITHUB_SHA" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg createdAtUtc "$created_utc" \
+            --arg zipSha "$zip_sha" \
+            --argjson zipBytes "$zip_bytes" \
+            --argjson entryCount "$entry_count" \
+            '{
+              schemaVersion: 1,
+              artifactName: $artifactName,
+              app: $app,
+              resourceGroup: $resourceGroup,
+              plan: $plan,
+              location: $location,
+              runtime: $runtime,
+              workflow: $workflow,
+              ref: $ref,
+              commit: $commit,
+              runId: $runId,
+              runAttempt: $runAttempt,
+              createdAtUtc: $createdAtUtc,
+              zipSha256: $zipSha,
+              zipBytes: $zipBytes,
+              entryCount: $entryCount
+            }' > gradex-api.manifest.json
+          jq -e '.schemaVersion == 1 and (.zipSha256 | length == 64)' gradex-api.manifest.json >/dev/null
+          echo "ZIP y manifiesto creados: sha256=$zip_sha bytes=$zip_bytes entradas=$entry_count"
+
+      - name: Verify deployable artifact before upload
+        shell: bash
+        env:
+          ARTIFACT_DIRECTORY: ${{ runner.temp }}
+          EXPECTED_APP: ${{ env.AZURE_WEBAPP_NAME }}
+          EXPECTED_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          EXPECTED_PLAN: ${{ env.AZURE_PLAN_NAME }}
+          EXPECTED_LOCATION: ${{ env.AZURE_LOCATION }}
+          EXPECTED_RUNTIME: ${{ env.AZURE_RUNTIME }}
+          EXPECTED_WORKFLOW: ${{ github.workflow }}
+          EXPECTED_REF: ${{ github.ref }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bash scripts/verify-appservice-artifact.sh
+
+      - name: Upload deployable artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: |
+            ${{ runner.temp }}/gradex-api.zip
+            ${{ runner.temp }}/gradex-api.sha256
+            ${{ runner.temp }}/gradex-api.manifest.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  deploy:
+    needs: package
+    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'DEPLOY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Checkout workflow actions and verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate target constants and OIDC variables
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          for name in \
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            AZURE_RESOURCE_GROUP AZURE_WEBAPP_NAME \
+            AZURE_PLAN_NAME AZURE_LOCATION AZURE_SQL_SERVER AZURE_SQL_DATABASE \
+            AZURE_RUNTIME ARTIFACT_NAME; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::Falta la variable $name." >&2
+              exit 1
+            fi
+          done
+          case "$AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME/$AZURE_PLAN_NAME/$AZURE_LOCATION/$AZURE_SQL_DATABASE" in
+            gradex-rg/GradeX-api/ASP-gradexrg-8bed/westus/GradeX_DevCloud) ;;
+            *)
+              echo "::error::Las constantes de destino no coinciden con la configuración revisada." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$AZURE_RUNTIME" != "DOTNETCORE|10.0" ]; then
+            echo "::error::El runtime esperado debe ser DOTNETCORE|10.0." >&2
+            exit 1
+          fi
+          if [ "$AZURE_SQL_SERVER" != "sql-gradex-students.database.windows.net" ]; then
+            echo "::error::El servidor SQL no coincide con el destino revisado." >&2
+            exit 1
+          fi
+          echo "Destino validado: $AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME plan=$AZURE_PLAN_NAME region=$AZURE_LOCATION runtime=$AZURE_RUNTIME"
+          echo "OIDC presente; no se imprimen IDs."
+
+      - name: Download deployable artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: artifact
+
+      - name: Verify downloaded artifact
+        shell: bash
+        env:
+          ARTIFACT_DIRECTORY: artifact
+          EXPECTED_APP: ${{ env.AZURE_WEBAPP_NAME }}
+          EXPECTED_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          EXPECTED_PLAN: ${{ env.AZURE_PLAN_NAME }}
+          EXPECTED_LOCATION: ${{ env.AZURE_LOCATION }}
+          EXPECTED_RUNTIME: ${{ env.AZURE_RUNTIME }}
+          EXPECTED_WORKFLOW: ${{ github.workflow }}
+          EXPECTED_REF: ${{ github.ref }}
+          EXPECTED_COMMIT: ${{ github.sha }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bash scripts/verify-appservice-artifact.sh
+
+      - name: Azure login with OIDC
+        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preflight (read-only, F1 code-only)
+        id: preflight
+        uses: ./.github/actions/appservice-f1-preflight
+        with:
+          resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+          webapp-name: ${{ env.AZURE_WEBAPP_NAME }}
+          plan-name: ${{ env.AZURE_PLAN_NAME }}
+          location: ${{ env.AZURE_LOCATION }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          sql-server: ${{ env.AZURE_SQL_SERVER }}
+          sql-database: ${{ env.AZURE_SQL_DATABASE }}
+          runtime: ${{ env.AZURE_RUNTIME }}
+          sql-firewall-check: 'true'
+
+      - name: Deploy ZIP to existing App Service (no slot)
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp deploy \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --src-path artifact/gradex-api.zip \
+            --type zip \
+            --clean false \
+            --restart true
+
+      - name: Verify HTTPS health endpoint
+        uses: ./.github/actions/appservice-health-smoke
+        with:
+          url: https://${{ steps.preflight.outputs.host }}/api/health
+          attempts: '15'
+          interval-seconds: '8'
+
+      - name: Deployment summary
+        if: always()
+        shell: bash
+        env:
+          DEPLOY_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "## GradeX.Api deployment"
+            echo "- Target: \`$AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME\` on plan \`$AZURE_PLAN_NAME\` ($AZURE_LOCATION)"
+            echo "- Run: $GITHUB_RUN_ID (attempt $GITHUB_RUN_ATTEMPT)"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Artifact: $ARTIFACT_NAME (ZIP + SHA-256 + manifest, 90 days)"
+            echo "- Result: $DEPLOY_RESULT"
+            echo "- Rollback: run 'Rollback GradeX.Api (manual)' with a previous successful deploy run_id."
+          } >> "$GITHUB_STEP_SUMMARY"
