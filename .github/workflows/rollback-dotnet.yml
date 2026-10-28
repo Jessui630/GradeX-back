@@ -1,0 +1,233 @@
+name: Rollback GradeX.Api (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID de un despliegue .NET anterior exitoso; el primer despliegue no tiene rollback'
+        required: true
+        type: string
+      confirm:
+        description: 'Escribe ROLLBACK para confirmar la reversión manual'
+        required: true
+        type: choice
+        options:
+          - 'no'
+          - 'ROLLBACK'
+        default: 'no'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-gradex-api
+  cancel-in-progress: false
+
+env:
+  AZURE_RESOURCE_GROUP: gradex-rg
+  AZURE_WEBAPP_NAME: GradeX-api
+  AZURE_PLAN_NAME: ASP-gradexrg-8bed
+  AZURE_LOCATION: westus
+  AZURE_SQL_SERVER: sql-gradex-students.database.windows.net
+  AZURE_SQL_DATABASE: GradeX_DevCloud
+  AZURE_RUNTIME: 'DOTNETCORE|10.0'
+  ARTIFACT_NAME: gradex-api
+  DEPLOY_WORKFLOW_NAME: 'Deploy GradeX.Api to Azure App Service (manual)'
+
+jobs:
+  rollback:
+    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'ROLLBACK' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      ROLLBACK_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Validate rollback run ID
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$ROLLBACK_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::run_id debe ser numérico." >&2
+            exit 1
+          fi
+          if [ "$ROLLBACK_RUN_ID" = "$GITHUB_RUN_ID" ]; then
+            echo "::error::run_id no puede ser el run actual de rollback." >&2
+            exit 1
+          fi
+          echo "Se reutilizará el artifact del run $ROLLBACK_RUN_ID."
+
+      - name: Validate source deploy run
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run view "$ROLLBACK_RUN_ID" --repo "$GITHUB_REPOSITORY" --json workflowName,headBranch,event,status,conclusion,headSha)"
+          workflow_name="$(jq -r '.workflowName // empty' <<<"$run_json")"
+          head_branch="$(jq -r '.headBranch // empty' <<<"$run_json")"
+          event_name="$(jq -r '.event // empty' <<<"$run_json")"
+          status="$(jq -r '.status // empty' <<<"$run_json")"
+          conclusion="$(jq -r '.conclusion // empty' <<<"$run_json")"
+          head_sha="$(jq -r '.headSha // empty' <<<"$run_json")"
+
+          if [ "$workflow_name" != "$DEPLOY_WORKFLOW_NAME" ]; then
+            echo "::error::El run no pertenece al workflow de despliegue esperado: $workflow_name" >&2
+            exit 1
+          fi
+          if [ "$head_branch" != "release" ]; then
+            echo "::error::El artifact debe provenir de la rama release: $head_branch" >&2
+            exit 1
+          fi
+          if [ "$event_name" != "workflow_dispatch" ]; then
+            echo "::error::El run de origen debe ser workflow_dispatch: $event_name" >&2
+            exit 1
+          fi
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+            echo "::error::El run de origen no terminó con éxito (status=$status, conclusion=$conclusion)." >&2
+            exit 1
+          fi
+          if ! [[ "$head_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::El run de origen no expone un commit SHA válido." >&2
+            exit 1
+          fi
+
+          run_attempt="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${ROLLBACK_RUN_ID}" --jq '.run_attempt')"
+          if ! [[ "$run_attempt" =~ ^[0-9]+$ ]]; then
+            echo "::error::No se pudo obtener run_attempt del run de origen." >&2
+            exit 1
+          fi
+
+          {
+            echo "head_sha=$head_sha"
+            echo "run_attempt=$run_attempt"
+          } >> "$GITHUB_OUTPUT"
+          echo "Run de origen validado: $workflow_name / $head_branch / $head_sha / attempt $run_attempt."
+
+      - name: Checkout workflow actions and verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate target constants and OIDC variables
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          for name in \
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            AZURE_RESOURCE_GROUP AZURE_WEBAPP_NAME \
+            AZURE_PLAN_NAME AZURE_LOCATION AZURE_SQL_SERVER AZURE_SQL_DATABASE \
+            AZURE_RUNTIME ARTIFACT_NAME; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              echo "::error::Falta la variable $name." >&2
+              exit 1
+            fi
+          done
+          case "$AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME/$AZURE_PLAN_NAME/$AZURE_LOCATION/$AZURE_SQL_DATABASE" in
+            gradex-rg/GradeX-api/ASP-gradexrg-8bed/westus/GradeX_DevCloud) ;;
+            *)
+              echo "::error::Las constantes de destino no coinciden con la configuración revisada." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$AZURE_RUNTIME" != "DOTNETCORE|10.0" ]; then
+            echo "::error::El runtime esperado debe ser DOTNETCORE|10.0." >&2
+            exit 1
+          fi
+          if [ "$AZURE_SQL_SERVER" != "sql-gradex-students.database.windows.net" ]; then
+            echo "::error::El servidor SQL no coincide con el destino revisado." >&2
+            exit 1
+          fi
+          echo "Destino validado: $AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME plan=$AZURE_PLAN_NAME region=$AZURE_LOCATION runtime=$AZURE_RUNTIME"
+
+      - name: Download previous deploy artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}
+          path: artifact
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify downloaded artifact
+        id: artifact
+        shell: bash
+        env:
+          ARTIFACT_DIRECTORY: artifact
+          EXPECTED_APP: ${{ env.AZURE_WEBAPP_NAME }}
+          EXPECTED_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          EXPECTED_PLAN: ${{ env.AZURE_PLAN_NAME }}
+          EXPECTED_LOCATION: ${{ env.AZURE_LOCATION }}
+          EXPECTED_RUNTIME: ${{ env.AZURE_RUNTIME }}
+          EXPECTED_WORKFLOW: ${{ env.DEPLOY_WORKFLOW_NAME }}
+          EXPECTED_REF: refs/heads/release
+          EXPECTED_COMMIT: ${{ steps.source.outputs.head_sha }}
+          EXPECTED_RUN_ID: ${{ inputs.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}
+        run: bash scripts/verify-appservice-artifact.sh
+
+      - name: Azure login with OIDC
+        uses: azure/login@8216e11d8cd9b42fe925c852af8e76311ff067ac # v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preflight (read-only, F1 code-only)
+        id: preflight
+        uses: ./.github/actions/appservice-f1-preflight
+        with:
+          resource-group: ${{ env.AZURE_RESOURCE_GROUP }}
+          webapp-name: ${{ env.AZURE_WEBAPP_NAME }}
+          plan-name: ${{ env.AZURE_PLAN_NAME }}
+          location: ${{ env.AZURE_LOCATION }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          sql-server: ${{ env.AZURE_SQL_SERVER }}
+          sql-database: ${{ env.AZURE_SQL_DATABASE }}
+          runtime: ${{ env.AZURE_RUNTIME }}
+          sql-firewall-check: 'true'
+
+      - name: Deploy previous ZIP to existing App Service (no slot)
+        shell: bash
+        run: |
+          set -euo pipefail
+          az webapp deploy \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AZURE_WEBAPP_NAME" \
+            --src-path artifact/gradex-api.zip \
+            --type zip \
+            --clean false \
+            --restart true
+
+      - name: Verify HTTPS health endpoint
+        uses: ./.github/actions/appservice-health-smoke
+        with:
+          url: https://${{ steps.preflight.outputs.host }}/api/health
+          attempts: '10'
+          interval-seconds: '6'
+
+      - name: Rollback summary
+        if: always()
+        shell: bash
+        env:
+          ROLLBACK_RESULT: ${{ job.status }}
+        run: |
+          {
+            echo "## GradeX.Api rollback"
+            echo "- Target: \`$AZURE_RESOURCE_GROUP/$AZURE_WEBAPP_NAME\` on plan \`$AZURE_PLAN_NAME\` ($AZURE_LOCATION)"
+            echo "- Source run: $ROLLBACK_RUN_ID (attempt ${{ steps.source.outputs.run_attempt }})"
+            echo "- Source commit: ${{ steps.source.outputs.head_sha }}"
+            echo "- Artifact SHA-256: ${{ steps.artifact.outputs.zip_sha256 }}"
+            echo "- Current run: $GITHUB_RUN_ID (attempt $GITHUB_RUN_ATTEMPT)"
+            echo "- Result: $ROLLBACK_RESULT"
+          } >> "$GITHUB_STEP_SUMMARY"

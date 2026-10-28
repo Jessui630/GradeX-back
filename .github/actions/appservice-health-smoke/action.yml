@@ -1,0 +1,89 @@
+name: Azure App Service health smoke
+description: >-
+  Verifies the HTTPS liveness endpoint of an Azure Web App without following
+  redirects. It requires HTTP 200 and the expected GradeX health contract.
+
+inputs:
+  url:
+    description: Full HTTPS URL of the health endpoint.
+    required: true
+  attempts:
+    description: Number of attempts before failing.
+    required: false
+    default: '15'
+  interval-seconds:
+    description: Seconds between attempts.
+    required: false
+    default: '8'
+  expected-application:
+    description: Expected value of the application field.
+    required: false
+    default: 'GradeX API'
+  expected-version:
+    description: Expected value of the version field.
+    required: false
+    default: '0.1.0'
+
+outputs:
+  url:
+    description: Health URL that answered correctly.
+    value: ${{ steps.health.outputs.url }}
+
+runs:
+  using: composite
+  steps:
+    - name: Verify HTTPS liveness endpoint
+      id: health
+      shell: bash
+      env:
+        HEALTH_URL: ${{ inputs.url }}
+        ATTEMPTS: ${{ inputs.attempts }}
+        INTERVAL_SECONDS: ${{ inputs.interval-seconds }}
+        EXPECTED_APPLICATION: ${{ inputs.expected-application }}
+        EXPECTED_VERSION: ${{ inputs.expected-version }}
+      run: |
+        set -euo pipefail
+
+        fail() {
+          echo "::error::$*" >&2
+          exit 1
+        }
+
+        [ -n "$HEALTH_URL" ] || fail "La URL del health check está vacía."
+        case "$HEALTH_URL" in
+          https://*.azurewebsites.net/api/health) ;;
+          *) fail "La URL del health check debe ser HTTPS *.azurewebsites.net/api/health." ;;
+        esac
+        if ! [[ "$ATTEMPTS" =~ ^[0-9]+$ ]] || [ "$ATTEMPTS" -lt 1 ] || [ "$ATTEMPTS" -gt 30 ]; then
+          fail "attempts debe ser un entero entre 1 y 30."
+        fi
+        if ! [[ "$INTERVAL_SECONDS" =~ ^[0-9]+$ ]] || [ "$INTERVAL_SECONDS" -lt 1 ] || [ "$INTERVAL_SECONDS" -gt 60 ]; then
+          fail "interval-seconds debe ser un entero entre 1 y 60."
+        fi
+
+        body="$(mktemp)"
+        trap 'rm -f "$body"' EXIT
+
+        for attempt in $(seq 1 "$ATTEMPTS"); do
+          code="$(curl --silent --show-error --max-time 30 --output "$body" --write-out '%{http_code}' "$HEALTH_URL" 2>/dev/null || true)"
+          if [ "$code" = "200" ] && jq -e \
+            --arg application "$EXPECTED_APPLICATION" \
+            --arg version "$EXPECTED_VERSION" \
+            '.status == "ok" and .application == $application and .version == $version' \
+            "$body" >/dev/null 2>&1; then
+            echo "Health check correcto: $HEALTH_URL"
+            echo "Respuesta: $(cat "$body")"
+            if [ -n "${GITHUB_OUTPUT:-}" ]; then
+              echo "url=$HEALTH_URL" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+          echo "Intento ${attempt}/${ATTEMPTS}: HTTP ${code:-sin respuesta} en $HEALTH_URL"
+          if [ "$attempt" -lt "$ATTEMPTS" ]; then
+            sleep "$INTERVAL_SECONDS"
+          fi
+        done
+
+        echo "Última respuesta del health endpoint:" >&2
+        cat "$body" >&2 2>/dev/null || true
+        fail "El health check no respondió 200 con el contrato esperado después de ${ATTEMPTS} intentos."

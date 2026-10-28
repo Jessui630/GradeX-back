@@ -1,0 +1,51 @@
+# Binarios de Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build
+/bin/
+/build/
+/dist/
+**/bin/
+**/obj/
+
+# .NET / Visual Studio local
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+**/TestResults/
+*.coverage
+*.coveragexml
+
+# Configuración local y secretos
+.env
+.env.*
+appsettings.*.local.json
+*.pfx
+*.snk
+secrets.json
+
+# Artefactos de base de datos locales
+*.mdf
+*.ldf
+*.bak
+
+# Artefactos generados de build y migraciones
+/artifacts/
+
+# VS Code
+.vscode/
+
+# JetBrains
+.idea/
+
+# Windows
+Thumbs.db
+
+# Mac
+.DS_Store
