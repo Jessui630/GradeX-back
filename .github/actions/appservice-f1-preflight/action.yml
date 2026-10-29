@@ -131,11 +131,10 @@ runs:
 
         az group show --name "$RESOURCE_GROUP" --query id -o tsv >/dev/null
 
-        plan_json="$(az appservice plan show --resource-group "$RESOURCE_GROUP" --name "$PLAN_NAME" -o json)"
         expected_plan_id="/subscriptions/$EXPECTED_SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.Web/serverfarms/$PLAN_NAME"
         plan_rest_json="$(az rest --method get --url "https://management.azure.com${expected_plan_id}?api-version=2024-04-01" -o json)" \
           || fail "No se pudo consultar el App Service Plan '$PLAN_NAME' mediante Azure REST API."
-        if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$plan_rest_json"; then
+        if ! jq -se 'length == 1 and (.[0] | type == "object")' >/dev/null 2>&1 <<<"$plan_rest_json"; then
           fail "La respuesta REST del App Service Plan '$PLAN_NAME' no es un objeto JSON válido."
         fi
         if ! jq -e --arg expected_id "$expected_plan_id" --arg expected_name "$PLAN_NAME" \
@@ -155,31 +154,21 @@ runs:
           >/dev/null 2>&1 <<<"$plan_rest_json"; then
           fail "El App Service Plan devuelto por REST no tiene SKU F1/Free y región esperada."
         fi
-        plan_sku="$(jq -r '.sku.name // empty' <<<"$plan_json")"
-        plan_tier="$(jq -r '.sku.tier // empty' <<<"$plan_json")"
-        plan_location="$(normalize "$(jq -r '.location // empty' <<<"$plan_json")")"
-        plan_workers="$(jq -r '.numberOfWorkers // 0' <<<"$plan_json")"
-        plan_max_workers="$(jq -r '.maximumNumberOfWorkers // 0' <<<"$plan_json")"
-        plan_per_site_scaling="$(jq -r 'if .perSiteScaling == false then "false" else "invalid" end' <<<"$plan_json")"
-        plan_elastic="$(jq -r 'if .elasticScaleEnabled == false then "false" else "invalid" end' <<<"$plan_json")"
-        plan_zone_redundant="$(jq -r 'if .zoneRedundant == false then "false" else "invalid" end' <<<"$plan_json")"
+        plan_sku="$(jq -r '.sku.name' <<<"$plan_rest_json")"
+        plan_tier="$(jq -r '.sku.tier' <<<"$plan_rest_json")"
+        plan_location="$(normalize "$(jq -r '.location' <<<"$plan_rest_json")")"
 
-        if [ "$(printf '%s' "$plan_sku" | tr '[:lower:]' '[:upper:]')" != "F1" ]; then
-          fail "El plan '$PLAN_NAME' no es F1 (sku=$plan_sku). El despliegue se detiene: no se permiten planes de pago."
-        fi
-        if [ "$(normalize "$plan_tier")" != "free" ]; then
-          fail "El plan '$PLAN_NAME' no es Free (tier=$plan_tier). El despliegue se detiene."
-        fi
-        if [ "$plan_location" != "$(normalize "$EXPECTED_LOCATION")" ]; then
-          fail "El plan '$PLAN_NAME' no está en la región esperada (location=$plan_location)."
-        fi
         if ! jq -e '.properties.reserved == true' >/dev/null 2>&1 <<<"$plan_rest_json"; then
           fail "El plan '$PLAN_NAME' no tiene properties.reserved=true booleano en la respuesta REST."
         fi
-        if [ "$plan_workers" != "1" ] || [ "$plan_max_workers" != "1" ]; then
-          fail "El plan '$PLAN_NAME' no tiene una única instancia F1 (workers=$plan_workers, max=$plan_max_workers)."
+        if ! jq -e '(.properties.numberOfWorkers == 1) and
+          (.properties.maximumNumberOfWorkers == 1) and (.sku.capacity == 1)' \
+          >/dev/null 2>&1 <<<"$plan_rest_json"; then
+          fail "El plan '$PLAN_NAME' no tiene una única instancia F1 según la respuesta REST."
         fi
-        if [ "$plan_per_site_scaling" != "false" ] || [ "$plan_elastic" != "false" ] || [ "$plan_zone_redundant" != "false" ]; then
+        if ! jq -e '(.properties.perSiteScaling == false) and
+          (.properties.elasticScaleEnabled == false) and (.properties.zoneRedundant == false)' \
+          >/dev/null 2>&1 <<<"$plan_rest_json"; then
           fail "El plan '$PLAN_NAME' tiene escalado o redundancia incompatibles con F1."
         fi
 
