@@ -6,10 +6,10 @@ El frontend React/Vite PWA se mantiene en un repositorio separado.
 
 ## Características
 
-- API ASP.NET Core con endpoints de salud y estructura preparada para los módulos de negocio.
+- API ASP.NET Core con salud, registro/login, catálogo de productos, solicitudes y evidencias privadas.
 - Arquitectura en capas: dominio, aplicación, infraestructura y API.
 - Persistencia con Entity Framework Core 10 y SQL Server.
-- Modelo de datos para usuarios, productos, solicitudes de evaluación, especialistas, evaluaciones, certificados y notificaciones.
+- Modelo de datos para usuarios, sesiones, productos, solicitudes de evaluación, evidencias, especialistas, evaluaciones, certificados y notificaciones.
 - Migraciones versionadas de Entity Framework Core.
 - Pruebas automatizadas con xUnit.
 - Análisis estático con los analizadores Roslyn del SDK de .NET.
@@ -126,6 +126,8 @@ Migraciones incluidas:
 1. `20261019003256_InitialSchema`: esquema inicial.
 2. `20261019010911_RestoreCheckConstraints`: restauración de restricciones CHECK.
 3. `20261022203833_AddCertificateSpecialtyReference`: columna nullable `Certificado.IdEspecialidad`, índice `IX_Certificado_IdEspecialidad` y clave foránea `FK_Certificado_Especialidad` con `NO ACTION`.
+4. `20261108214534_AddSprint1Solicitudes`: sesiones persistentes, idempotencia de solicitudes, requisitos por categoría, metadatos de evidencia y datos iniciales de catálogo/estados/tipos de evidencia.
+5. `20261111190603_SeedRolesOperativos`: siembra idempotente de los roles base `Solicitante`, `Especialista` y `Administrador`. Falla de forma explícita si `Solicitante` existe inactivo, para exigir revisión manual.
 
 Los scripts de referencia del esquema histórico están en `docs/database/InitialSchema.sql` y `docs/database/RestoreCheckConstraints.sql`.
 
@@ -145,6 +147,50 @@ GET /api/health
 
 El endpoint es de liveness: responde aunque Azure SQL esté en pausa y no debe usarse como prueba de conectividad de base de datos. Las pruebas unitarias no abren SQL Server. La prueba de integración HTTP usa `WebApplicationFactory` y `TestServer`, y tampoco abre SQL Server.
 
+## Endpoints de cuenta y solicitudes
+
+```text
+POST   /api/cuentas
+GET    /api/sesiones/csrf
+POST   /api/sesiones
+GET    /api/sesiones/actual
+DELETE /api/sesiones/actual
+GET    /api/catalogo/categorias
+GET    /api/catalogo/categorias/{id}/marcas
+GET    /api/catalogo/categorias/{id}/requisitos
+POST   /api/solicitudes
+POST   /api/solicitudes/{id}/enviar
+POST   /api/solicitudes/{id}/evidencias
+GET    /api/solicitudes
+GET    /api/solicitudes/{id}
+GET    /api/solicitudes/{id}/evidencias/{idEvidencia}/archivo
+```
+
+Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. La ruta local `Almacenamiento:Evidencias:Ruta` es para desarrollo; el disco de una instancia de App Service no es almacenamiento durable. La integración con Blob Storage privado queda pendiente de autorización de infraestructura.
+
+`Sesion:DuracionMinutos`, `Sesion:CrossSite`, `ForwardedHeaders:Enabled`, `ForwardedHeaders:KnownProxies`, `RateLimiting:*` y `Cors:AllowedOrigins` se configuran en `appsettings.json` o por variables de entorno. No incluir secretos en el repositorio.
+
+### Publicación del registro en producción
+
+La release desplegada antes de este cambio no contiene el Sprint 1 y responde `404` en `POST /api/cuentas`; el frontend muestra el mensaje genérico porque no recibe un `ProblemDetails`. Para publicar el registro real:
+
+1. Autorizar y aplicar en Azure SQL las migraciones pendientes, sin ejecutar `Down` ni recrear la base. El script idempotente se genera con:
+
+   ```powershell
+   dotnet ef migrations script 20261022203833_AddCertificateSpecialtyReference 20261111190603_SeedRolesOperativos `
+     --idempotent `
+     --project src/GradeX.Infrastructure `
+     --startup-project src/GradeX.Api
+   ```
+
+   El script crea `SesionUsuario`, los requisitos por categoría, las columnas de idempotencia/evidencia y siembra los roles base. No elimina datos.
+
+2. Promover el código con Sprint 1 a `release` y ejecutar el workflow manual existente `Deploy GradeX.Api to Azure App Service (manual)` con `DEPLOY`. El smoke posterior comprueba `/api/health`, `/api/sesiones/csrf` y que `POST /api/cuentas` exista y responda `400` ante un cuerpo vacío, sin crear cuentas.
+3. Verificar `GET /api/health`, `GET /api/sesiones/csrf` y `POST /api/cuentas` desde el host público.
+4. Probar un registro sintético autorizado y confirmar el alta en `Usuario`, el vínculo `UsuarioRol` y el inicio de sesión. Eliminar la cuenta sintética al terminar.
+
+No se debe publicar una cuenta de prueba real ni ejecutar la prueba hasta que la migración y el despliegue estén autorizados.
+
 ## Pruebas
 
 ```powershell
@@ -153,11 +199,14 @@ dotnet test GradeX.slnx
 
 Pruebas incluidas actualmente:
 
-- Contrato del controlador de salud.
-- Contrato de la respuesta de salud y su versión.
-- Ruta HTTP `/api/health` mediante `WebApplicationFactory` y `TestServer`, sin SQL Server.
+- Contratos unitarios y HTTP de salud, registro, login, sesiones y autorización.
+- Casos de uso de registro/login, validación de productos y evidencias.
+- Prueba de integración SQL del flujo real de registro, duplicado, login con CSRF, cookie HttpOnly y recuperación de sesión.
+- Pruebas de integración SQL contra `GradeX_IntegrationTests`: concurrencia, atomicidad, colación, sesión persistente entre contextos, solicitudes, evidencias y aislamiento por propietario.
+- La prueba externa de Pwned Passwords es optativa y se habilita con `GRADEX_PWNED_LIVE_TEST=1`.
+- Las pruebas SQL requieren `GRADEX_INTEGRATION_TEST_CONNECTION` apuntando explícitamente a `MSSQLLocalDB/GradeX_IntegrationTests`; no se ejecutan contra `GradeX_Dev` ni Azure.
 
-La solución contiene cuatro pruebas automatizadas.
+Las pruebas que requieren SQL se omiten cuando no existe la variable de integración. El resultado exacto se registra con el comando ejecutado; no se fija un contador manual en este documento.
 
 ## Calidad de código
 

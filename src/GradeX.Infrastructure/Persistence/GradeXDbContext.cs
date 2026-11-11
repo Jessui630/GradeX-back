@@ -16,6 +16,10 @@ public partial class GradeXDbContext : DbContext
 
     public virtual DbSet<CategoriaMarca> CategoriaMarcas { get; set; }
 
+    public virtual DbSet<CategoriaCampoRequisito> CategoriaCampoRequisitos { get; set; }
+
+    public virtual DbSet<CategoriaEvidenciaRequisito> CategoriaEvidenciaRequisitos { get; set; }
+
     public virtual DbSet<Categorium> Categoria { get; set; }
 
     public virtual DbSet<Certificado> Certificados { get; set; }
@@ -43,6 +47,8 @@ public partial class GradeXDbContext : DbContext
     public virtual DbSet<ResultadoCriterio> ResultadoCriterios { get; set; }
 
     public virtual DbSet<Rol> Rols { get; set; }
+
+    public virtual DbSet<SesionUsuario> SesionUsuarios { get; set; }
 
     public virtual DbSet<SolicitudEvaluacion> SolicitudEvaluacions { get; set; }
 
@@ -84,9 +90,37 @@ public partial class GradeXDbContext : DbContext
                 .HasConstraintName("FK_Asignacion_Solicitud");
         });
 
-        modelBuilder.Entity<CategoriaMarca>(entity =>
+        modelBuilder.Entity<CategoriaCampoRequisito>(entity =>
         {
-            entity.HasKey(e => new { e.IdCategoria, e.IdMarca });
+            entity.HasKey(e => new { e.IdCategoria, e.Campo });
+            entity.ToTable("CategoriaCampoRequisito");
+            entity.Property(e => e.Campo).HasMaxLength(30);
+            entity.Property(e => e.Obligatorio).HasDefaultValue(true);
+            entity.HasOne(d => d.IdCategoriaNavigation).WithMany(p => p.CategoriaCampoRequisitos)
+                .HasForeignKey(d => d.IdCategoria)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_CategoriaCampoRequisito_Categoria");
+        });
+
+        modelBuilder.Entity<CategoriaEvidenciaRequisito>(entity =>
+        {
+            entity.HasKey(e => new { e.IdCategoria, e.IdTipoEvidencia });
+            entity.ToTable("CategoriaEvidenciaRequisito");
+            entity.Property(e => e.Obligatorio).HasDefaultValue(true);
+            entity.Property(e => e.CantidadMinima).HasDefaultValue(1);
+            entity.Property(e => e.CantidadMaxima).HasDefaultValue(1);
+            entity.HasOne(d => d.IdCategoriaNavigation).WithMany(p => p.CategoriaEvidenciaRequisitos)
+                .HasForeignKey(d => d.IdCategoria)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_CategoriaEvidenciaRequisito_Categoria");
+            entity.HasOne(d => d.IdTipoEvidenciaNavigation).WithMany(p => p.CategoriaEvidenciaRequisitos)
+                .HasForeignKey(d => d.IdTipoEvidencia)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_CategoriaEvidenciaRequisito_Tipo");
+        });
+
+        modelBuilder.Entity<CategoriaMarca>(entity =>
+        {            entity.HasKey(e => new { e.IdCategoria, e.IdMarca });
 
             entity.ToTable("CategoriaMarca");
 
@@ -285,6 +319,9 @@ public partial class GradeXDbContext : DbContext
 
             entity.Property(e => e.Activa).HasDefaultValue(true, "DF_Evidencia_Activa");
             entity.Property(e => e.Descripcion).HasMaxLength(500);
+            entity.Property(e => e.HashSha256).HasMaxLength(64);
+            entity.Property(e => e.NombreOriginal).HasMaxLength(255);
+            entity.Property(e => e.TipoContenido).HasMaxLength(100);
             entity.Property(e => e.FechaCarga)
                 .HasPrecision(0)
                 .HasDefaultValueSql("(sysdatetime())", "DF_Evidencia_FechaCarga");
@@ -422,9 +459,28 @@ public partial class GradeXDbContext : DbContext
             entity.Property(e => e.Nombre).HasMaxLength(50);
         });
 
-        modelBuilder.Entity<SolicitudEvaluacion>(entity =>
+        modelBuilder.Entity<SesionUsuario>(entity =>
         {
-            entity.HasKey(e => e.IdSolicitud);
+            entity.HasKey(e => e.IdSesion);
+            entity.ToTable("SesionUsuario");
+            entity.HasIndex(e => e.TokenHash, "UQ_SesionUsuario_TokenHash").IsUnique();
+            entity.HasIndex(e => e.IdUsuario, "IX_SesionUsuario_Usuario");
+            entity.HasIndex(e => e.FechaExpiracion, "IX_SesionUsuario_Expiracion");
+            entity.Property(e => e.IdSesion).ValueGeneratedNever();
+            entity.Property(e => e.TokenHash).HasMaxLength(64).IsFixedLength();
+            entity.Property(e => e.FechaCreacion)
+                .HasPrecision(0)
+                .HasDefaultValueSql("(sysdatetime())", "DF_SesionUsuario_FechaCreacion");
+            entity.Property(e => e.FechaExpiracion).HasPrecision(0);
+            entity.Property(e => e.FechaRevocacion).HasPrecision(0);
+            entity.HasOne(d => d.IdUsuarioNavigation).WithMany(p => p.SesionUsuarios)
+                .HasForeignKey(d => d.IdUsuario)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("FK_SesionUsuario_Usuario");
+        });
+
+        modelBuilder.Entity<SolicitudEvaluacion>(entity =>
+        {            entity.HasKey(e => e.IdSolicitud);
 
             entity.ToTable("SolicitudEvaluacion");
 
@@ -435,6 +491,10 @@ public partial class GradeXDbContext : DbContext
             entity.HasIndex(e => e.IdSolicitante, "IX_Solicitud_Solicitante");
 
             entity.HasIndex(e => e.Folio, "UQ_SolicitudEvaluacion_Folio").IsUnique();
+
+            entity.HasIndex(e => e.ClaveIdempotencia, "UQ_Solicitud_Idempotencia")
+                .IsUnique()
+                .HasFilter("([ClaveIdempotencia] IS NOT NULL)");
 
             entity.Property(e => e.FechaSolicitud)
                 .HasPrecision(0)
