@@ -69,6 +69,64 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.CategoriaCampoRequisito", b =>
+                {
+                    b.Property<int>("IdCategoria")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Campo")
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<int?>("LongitudMaxima")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Obligatorio")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<int>("Orden")
+                        .HasColumnType("int");
+
+                    b.HasKey("IdCategoria", "Campo");
+
+                    b.ToTable("CategoriaCampoRequisito", (string)null);
+                });
+
+            modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.CategoriaEvidenciaRequisito", b =>
+                {
+                    b.Property<int>("IdCategoria")
+                        .HasColumnType("int");
+
+                    b.Property<int>("IdTipoEvidencia")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CantidadMaxima")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
+                    b.Property<int>("CantidadMinima")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(1);
+
+                    b.Property<bool>("Obligatorio")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<int>("Orden")
+                        .HasColumnType("int");
+
+                    b.HasKey("IdCategoria", "IdTipoEvidencia");
+
+                    b.HasIndex("IdTipoEvidencia");
+
+                    b.ToTable("CategoriaEvidenciaRequisito", (string)null);
+                });
+
             modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.CategoriaMarca", b =>
                 {
                     b.Property<int>("IdCategoria")
@@ -464,11 +522,26 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                         .HasColumnType("datetime2(0)")
                         .HasDefaultValueSql("(sysdatetime())", "DF_Evidencia_FechaCarga");
 
+                    b.Property<string>("HashSha256")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<int>("IdSolicitud")
                         .HasColumnType("int");
 
                     b.Property<int>("IdTipoEvidencia")
                         .HasColumnType("int");
+
+                    b.Property<string>("NombreOriginal")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<long?>("TamanoBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("TipoContenido")
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("UrlArchivo")
                         .IsRequired()
@@ -697,6 +770,46 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                     b.ToTable("Rol", (string)null);
                 });
 
+            modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.SesionUsuario", b =>
+                {
+                    b.Property<Guid>("IdSesion")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTime>("FechaCreacion")
+                        .ValueGeneratedOnAdd()
+                        .HasPrecision(0)
+                        .HasColumnType("datetime2(0)")
+                        .HasDefaultValueSql("(sysdatetime())", "DF_SesionUsuario_FechaCreacion");
+
+                    b.Property<DateTime>("FechaExpiracion")
+                        .HasPrecision(0)
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<DateTime?>("FechaRevocacion")
+                        .HasPrecision(0)
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<int>("IdUsuario")
+                        .HasColumnType("int");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nchar(64)")
+                        .IsFixedLength();
+
+                    b.HasKey("IdSesion");
+
+                    b.HasIndex(new[] { "FechaExpiracion" }, "IX_SesionUsuario_Expiracion");
+
+                    b.HasIndex(new[] { "IdUsuario" }, "IX_SesionUsuario_Usuario");
+
+                    b.HasIndex(new[] { "TokenHash" }, "UQ_SesionUsuario_TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("SesionUsuario", (string)null);
+                });
+
             modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.SolicitudEvaluacion", b =>
                 {
                     b.Property<int>("IdSolicitud")
@@ -704,6 +817,9 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                         .HasColumnType("int");
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("IdSolicitud"));
+
+                    b.Property<Guid?>("ClaveIdempotencia")
+                        .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("FechaSolicitud")
                         .ValueGeneratedOnAdd()
@@ -745,6 +861,10 @@ namespace GradeX.Infrastructure.Persistence.Migrations
 
                     b.HasIndex(new[] { "Folio" }, "UQ_SolicitudEvaluacion_Folio")
                         .IsUnique();
+
+                    b.HasIndex(new[] { "ClaveIdempotencia" }, "UQ_Solicitud_Idempotencia")
+                        .IsUnique()
+                        .HasFilter("([ClaveIdempotencia] IS NOT NULL)");
 
                     b.ToTable("SolicitudEvaluacion", (string)null);
                 });
@@ -885,6 +1005,38 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                     b.Navigation("IdEspecialistaNavigation");
 
                     b.Navigation("IdSolicitudNavigation");
+                });
+
+            modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.CategoriaCampoRequisito", b =>
+                {
+                    b.HasOne("GradeX.Infrastructure.Persistence.Models.Categorium", "IdCategoriaNavigation")
+                        .WithMany("CategoriaCampoRequisitos")
+                        .HasForeignKey("IdCategoria")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_CategoriaCampoRequisito_Categoria");
+
+                    b.Navigation("IdCategoriaNavigation");
+                });
+
+            modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.CategoriaEvidenciaRequisito", b =>
+                {
+                    b.HasOne("GradeX.Infrastructure.Persistence.Models.Categorium", "IdCategoriaNavigation")
+                        .WithMany("CategoriaEvidenciaRequisitos")
+                        .HasForeignKey("IdCategoria")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_CategoriaEvidenciaRequisito_Categoria");
+
+                    b.HasOne("GradeX.Infrastructure.Persistence.Models.TipoEvidencium", "IdTipoEvidenciaNavigation")
+                        .WithMany("CategoriaEvidenciaRequisitos")
+                        .HasForeignKey("IdTipoEvidencia")
+                        .IsRequired()
+                        .HasConstraintName("FK_CategoriaEvidenciaRequisito_Tipo");
+
+                    b.Navigation("IdCategoriaNavigation");
+
+                    b.Navigation("IdTipoEvidenciaNavigation");
                 });
 
             modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.CategoriaMarca", b =>
@@ -1097,6 +1249,18 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                     b.Navigation("IdEvaluacionNavigation");
                 });
 
+            modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.SesionUsuario", b =>
+                {
+                    b.HasOne("GradeX.Infrastructure.Persistence.Models.Usuario", "IdUsuarioNavigation")
+                        .WithMany("SesionUsuarios")
+                        .HasForeignKey("IdUsuario")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_SesionUsuario_Usuario");
+
+                    b.Navigation("IdUsuarioNavigation");
+                });
+
             modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.SolicitudEvaluacion", b =>
                 {
                     b.HasOne("GradeX.Infrastructure.Persistence.Models.EstadoSolicitud", "IdEstadoSolicitudNavigation")
@@ -1152,6 +1316,10 @@ namespace GradeX.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.Categorium", b =>
                 {
+                    b.Navigation("CategoriaCampoRequisitos");
+
+                    b.Navigation("CategoriaEvidenciaRequisitos");
+
                     b.Navigation("CategoriaMarcas");
 
                     b.Navigation("CriterioEvaluacions");
@@ -1227,6 +1395,8 @@ namespace GradeX.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("GradeX.Infrastructure.Persistence.Models.TipoEvidencium", b =>
                 {
+                    b.Navigation("CategoriaEvidenciaRequisitos");
+
                     b.Navigation("Evidencia");
                 });
 
@@ -1242,6 +1412,8 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                     b.Navigation("Notificacions");
 
                     b.Navigation("Productos");
+
+                    b.Navigation("SesionUsuarios");
 
                     b.Navigation("SolicitudEvaluacions");
 
