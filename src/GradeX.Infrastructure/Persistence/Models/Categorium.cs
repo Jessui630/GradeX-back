@@ -15,6 +15,10 @@ public partial class Categorium
 
     public virtual ICollection<CategoriaMarca> CategoriaMarcas { get; set; } = new List<CategoriaMarca>();
 
+    public virtual ICollection<CategoriaCampoRequisito> CategoriaCampoRequisitos { get; set; } = new List<CategoriaCampoRequisito>();
+
+    public virtual ICollection<CategoriaEvidenciaRequisito> CategoriaEvidenciaRequisitos { get; set; } = new List<CategoriaEvidenciaRequisito>();
+
     public virtual ICollection<CriterioEvaluacion> CriterioEvaluacions { get; set; } = new List<CriterioEvaluacion>();
 
     public virtual ICollection<EspecialidadEspecialistum> EspecialidadEspecialista { get; set; } = new List<EspecialidadEspecialistum>();

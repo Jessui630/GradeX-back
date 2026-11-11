@@ -315,6 +315,21 @@ jobs:
           attempts: '15'
           interval-seconds: '8'
 
+      - name: Verify registration endpoint contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://${{ steps.preflight.outputs.host }}"
+          csrf_json="$(curl -fsS --max-time 30 "$base/api/sesiones/csrf")"
+          echo "$csrf_json" | jq -e '.token | type == "string" and length > 0' >/dev/null
+          status="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 \
+            -X POST -H 'Content-Type: application/json' --data '{}' "$base/api/cuentas")"
+          if [ "$status" != "400" ]; then
+            echo "::error::POST /api/cuentas respondió $status; se esperaba 400 de validación. El ZIP desplegado no contiene el registro del Sprint 1."
+            exit 1
+          fi
+          echo "Registro verificado: POST /api/cuentas existe y valida la solicitud (400)."
+
       - name: Deployment summary
         if: always()
         shell: bash

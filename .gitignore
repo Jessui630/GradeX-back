@@ -38,6 +38,9 @@ secrets.json
 # Artefactos generados de build y migraciones
 /artifacts/
 
+# Evidencias locales y archivos de trabajo
+/App_Data/
+
 # VS Code
 .vscode/
 
