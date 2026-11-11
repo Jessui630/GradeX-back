@@ -176,6 +176,8 @@ La release desplegada antes de este cambio no contiene el Sprint 1 y responde `4
 
 1. Autorizar y aplicar en Azure SQL las migraciones pendientes, sin ejecutar `Down` ni recrear la base. El script idempotente se genera con:
 
+   El script versionado está en `docs/database/Produccion-Registro-Pendientes.sql`. También se puede regenerar con:
+
    ```powershell
    dotnet ef migrations script 20261022203833_AddCertificateSpecialtyReference 20261111190603_SeedRolesOperativos `
      --idempotent `
