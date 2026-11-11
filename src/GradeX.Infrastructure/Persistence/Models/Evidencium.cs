@@ -13,6 +13,14 @@ public partial class Evidencium
 
     public string UrlArchivo { get; set; } = null!;
 
+    public string? NombreOriginal { get; set; }
+
+    public string? TipoContenido { get; set; }
+
+    public long? TamanoBytes { get; set; }
+
+    public string? HashSha256 { get; set; }
+
     public string? Descripcion { get; set; }
 
     public DateTime FechaCarga { get; set; }

@@ -12,4 +12,6 @@ public partial class TipoEvidencium
     public string Nombre { get; set; } = null!;
 
     public virtual ICollection<Evidencium> Evidencia { get; set; } = new List<Evidencium>();
+
+    public virtual ICollection<CategoriaEvidenciaRequisito> CategoriaEvidenciaRequisitos { get; set; } = new List<CategoriaEvidenciaRequisito>();
 }

@@ -27,5 +27,7 @@ public partial class Usuario
 
     public virtual ICollection<SolicitudEvaluacion> SolicitudEvaluacions { get; set; } = new List<SolicitudEvaluacion>();
 
+    public virtual ICollection<SesionUsuario> SesionUsuarios { get; set; } = new List<SesionUsuario>();
+
     public virtual ICollection<UsuarioRol> UsuarioRols { get; set; } = new List<UsuarioRol>();
 }

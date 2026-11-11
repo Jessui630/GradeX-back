@@ -6,11 +6,12 @@ El frontend React/Vite PWA se mantiene en un repositorio separado.
 
 ## Características
 
-- API ASP.NET Core con endpoints de salud y estructura preparada para los módulos de negocio.
+- API ASP.NET Core con salud, registro/login, catálogo de productos, solicitudes y evidencias privadas.
 - Arquitectura en capas: dominio, aplicación, infraestructura y API.
 - Persistencia con Entity Framework Core 10 y SQL Server.
-- Modelo de datos para usuarios, productos, solicitudes de evaluación, especialistas, evaluaciones, certificados y notificaciones.
+- Modelo de datos para usuarios, sesiones, productos, solicitudes de evaluación, evidencias, especialistas, evaluaciones, certificados y notificaciones.
 - Migraciones versionadas de Entity Framework Core.
+- Asignación administrativa de solicitudes a especialistas compatibles, con control de concurrencia y trazabilidad.
 - Pruebas automatizadas con xUnit.
 - Análisis estático con los analizadores Roslyn del SDK de .NET.
 - Script de calidad reproducible con logs, SARIF y resultados TRX.
@@ -126,6 +127,8 @@ Migraciones incluidas:
 1. `20261019003256_InitialSchema`: esquema inicial.
 2. `20261019010911_RestoreCheckConstraints`: restauración de restricciones CHECK.
 3. `20261022203833_AddCertificateSpecialtyReference`: columna nullable `Certificado.IdEspecialidad`, índice `IX_Certificado_IdEspecialidad` y clave foránea `FK_Certificado_Especialidad` con `NO ACTION`.
+4. `20261108214534_AddSprint1Solicitudes`: sesiones persistentes, idempotencia de solicitudes, requisitos por categoría, metadatos de evidencia y datos iniciales de catálogo/estados/tipos de evidencia.
+5. `20261111181719_AddEstadoAsignada`: inserción idempotente del estado `ASIGNADA` para la asignación de especialistas.
 
 Los scripts de referencia del esquema histórico están en `docs/database/InitialSchema.sql` y `docs/database/RestoreCheckConstraints.sql`.
 
@@ -145,6 +148,46 @@ GET /api/health
 
 El endpoint es de liveness: responde aunque Azure SQL esté en pausa y no debe usarse como prueba de conectividad de base de datos. Las pruebas unitarias no abren SQL Server. La prueba de integración HTTP usa `WebApplicationFactory` y `TestServer`, y tampoco abre SQL Server.
 
+## Endpoints de cuenta y solicitudes
+
+```text
+POST   /api/cuentas
+GET    /api/sesiones/csrf
+POST   /api/sesiones
+GET    /api/sesiones/actual
+DELETE /api/sesiones/actual
+GET    /api/catalogo/categorias
+GET    /api/catalogo/categorias/{id}/marcas
+GET    /api/catalogo/categorias/{id}/requisitos
+POST   /api/solicitudes
+POST   /api/solicitudes/{id}/enviar
+POST   /api/solicitudes/{id}/evidencias
+GET    /api/solicitudes
+GET    /api/solicitudes/{id}
+GET    /api/solicitudes/{id}/evidencias/{idEvidencia}/archivo
+```
+
+### Asignación de especialistas (HU-006)
+
+Los endpoints administrativos exigen sesión con rol `Administrador`. Las escrituras requieren la cookie y la cabecera CSRF (`X-CSRF-Token`) y están limitadas por la política `asignaciones`.
+
+```text
+GET  /api/administracion/solicitudes
+GET  /api/administracion/solicitudes/{id}
+GET  /api/administracion/solicitudes/{id}/especialistas-compatibles
+POST /api/administracion/solicitudes/{id}/asignacion
+```
+
+`POST /api/administracion/solicitudes/{id}/asignacion` recibe `{ "idEspecialista": 123 }` y devuelve `201` con `idAsignacion`, `idSolicitud`, `folio`, `idEspecialista`, `especialista`, `fechaAsignacion`, `estadoCodigo` y `estadoNombre`. La asignación y el cambio de estado a `ASIGNADA` se confirman en la misma transacción SQL. Una solicitud solo admite una asignación activa: los intentos repetidos responden `409` e incluyen `asignacionActual` para conservar la trazabilidad. El listado admite `?estado=PENDIENTE_ASIGNACION&pagina=1&tamanoPagina=20`.
+
+La compatibilidad se calcula con las áreas activas de `EspecialidadEspecialista`: la categoría debe coincidir y, si el producto tiene marca, se aceptan áreas de esa marca o áreas generales de la categoría. Cuando el producto no tiene marca solo se ofrecen áreas generales. El especialista, su usuario y el área deben estar activos; la carga activa se usa para ordenar, no como límite inventado. Si no existen compatibles, la consulta responde `200` con `especialistas: []` y `puedeAsignarse: true`; la asignación de un perfil incompatible responde `422`.
+
+La migración `20261111181719_AddEstadoAsignada` inserta el estado `ASIGNADA` de forma idempotente. No modifica tablas ni datos históricos.
+
+Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. La ruta local `Almacenamiento:Evidencias:Ruta` es para desarrollo; el disco de una instancia de App Service no es almacenamiento durable. La integración con Blob Storage privado queda pendiente de autorización de infraestructura.
+
+`Sesion:DuracionMinutos`, `Sesion:CrossSite`, `ForwardedHeaders:Enabled`, `ForwardedHeaders:KnownProxies`, `RateLimiting:*` y `Cors:AllowedOrigins` se configuran en `appsettings.json` o por variables de entorno. No incluir secretos en el repositorio.
+
 ## Pruebas
 
 ```powershell
@@ -153,11 +196,14 @@ dotnet test GradeX.slnx
 
 Pruebas incluidas actualmente:
 
-- Contrato del controlador de salud.
-- Contrato de la respuesta de salud y su versión.
-- Ruta HTTP `/api/health` mediante `WebApplicationFactory` y `TestServer`, sin SQL Server.
+- Contratos unitarios y HTTP de salud, registro, login, sesiones y autorización.
+- Casos de uso de registro/login, validación de productos y evidencias.
+- Contratos HTTP y reglas de asignación de especialistas por categoría o marca, incluida autorización administrativa y conflictos de concurrencia.
+- Pruebas de integración SQL contra `GradeX_IntegrationTests`: concurrencia, atomicidad, colación, sesión persistente entre contextos, solicitudes, evidencias y aislamiento por propietario.
+- La prueba externa de Pwned Passwords es optativa y se habilita con `GRADEX_PWNED_LIVE_TEST=1`.
+- Las pruebas SQL requieren `GRADEX_INTEGRATION_TEST_CONNECTION` apuntando explícitamente a `MSSQLLocalDB/GradeX_IntegrationTests`; no se ejecutan contra `GradeX_Dev` ni Azure.
 
-La solución contiene cuatro pruebas automatizadas.
+Las pruebas que requieren SQL se omiten cuando no existe la variable de integración. El resultado exacto se registra con el comando ejecutado; no se fija un contador manual en este documento.
 
 ## Calidad de código
 

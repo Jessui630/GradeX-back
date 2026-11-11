@@ -15,6 +15,8 @@ public partial class SolicitudEvaluacion
 
     public int IdEstadoSolicitud { get; set; }
 
+    public Guid? ClaveIdempotencia { get; set; }
+
     public DateTime FechaSolicitud { get; set; }
 
     public DateTime FechaUltimoCambio { get; set; }
