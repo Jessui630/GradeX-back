@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using GradeX.Application.Cuentas;
 using GradeX.Application.Sesiones;
+using GradeX.Infrastructure.Persistence;
 using GradeX.Infrastructure.Persistence.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -49,22 +50,24 @@ public sealed class SesionStore(GradeXDbContext db) : ISesionStore
 
         var hash = Hash(token);
         var ahora = DateTime.UtcNow;
-        var sesion = await db.SesionUsuarios
-            .AsNoTracking()
-            .Where(s => s.TokenHash == hash && s.FechaRevocacion == null && s.FechaExpiracion > ahora)
-            .Select(s => new
-            {
-                s.IdSesion,
-                s.IdUsuario,
-                s.IdUsuarioNavigation.NombreCompleto,
-                s.IdUsuarioNavigation.Correo,
-                Roles = s.IdUsuarioNavigation.UsuarioRols
-                    .Where(ur => ur.IdRolNavigation.Activo)
-                    .Select(ur => ur.IdRolNavigation.Nombre)
-                    .ToList(),
-                s.FechaExpiracion
-            })
-            .SingleOrDefaultAsync(cancellationToken);
+        var sesion = await SqlRetry.EjecutarAsync(
+            ct => db.SesionUsuarios
+                .AsNoTracking()
+                .Where(s => s.TokenHash == hash && s.FechaRevocacion == null && s.FechaExpiracion > ahora)
+                .Select(s => new
+                {
+                    s.IdSesion,
+                    s.IdUsuario,
+                    s.IdUsuarioNavigation.NombreCompleto,
+                    s.IdUsuarioNavigation.Correo,
+                    Roles = s.IdUsuarioNavigation.UsuarioRols
+                        .Where(ur => ur.IdRolNavigation.Activo)
+                        .Select(ur => ur.IdRolNavigation.Nombre)
+                        .ToList(),
+                    s.FechaExpiracion
+                })
+                .SingleOrDefaultAsync(ct),
+            cancellationToken);
 
         return sesion is null
             ? null
