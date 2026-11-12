@@ -233,27 +233,32 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
             consulta = consulta.Where(s => s.IdEstadoSolicitudNavigation.Codigo == codigo);
         }
 
-        var total = await consulta.CountAsync(cancellationToken);
-        var filas = await consulta
-            .OrderByDescending(s => s.FechaSolicitud)
-            .ThenByDescending(s => s.IdSolicitud)
-            .Skip((pagina - 1) * tamanoPagina)
-            .Take(tamanoPagina)
-            .Select(s => new
-            {
-                s.IdSolicitud,
-                s.Folio,
-                NombreProducto = s.IdProductoNavigation.Nombre,
-                Categoria = s.IdProductoNavigation.IdCategoriaNavigation.Nombre,
-                Marca = s.IdProductoNavigation.IdMarcaNavigation != null
-                    ? s.IdProductoNavigation.IdMarcaNavigation.Nombre
-                    : null,
-                EstadoCodigo = s.IdEstadoSolicitudNavigation.Codigo,
-                EstadoNombre = s.IdEstadoSolicitudNavigation.Nombre,
-                s.FechaSolicitud,
-                EvidenciasActivas = s.Evidencia.Count(e => e.Activa)
-            })
-            .ToListAsync(cancellationToken);
+        var salto = (int)Math.Min((long)(pagina - 1) * tamanoPagina, int.MaxValue);
+        var (total, filas) = await SqlRetry.EjecutarAsync(async ct =>
+        {
+            var totalActual = await consulta.CountAsync(ct);
+            var filasActuales = await consulta
+                .OrderByDescending(s => s.FechaSolicitud)
+                .ThenByDescending(s => s.IdSolicitud)
+                .Skip(salto)
+                .Take(tamanoPagina)
+                .Select(s => new
+                {
+                    s.IdSolicitud,
+                    s.Folio,
+                    NombreProducto = s.IdProductoNavigation.Nombre,
+                    Categoria = s.IdProductoNavigation.IdCategoriaNavigation.Nombre,
+                    Marca = s.IdProductoNavigation.IdMarcaNavigation != null
+                        ? s.IdProductoNavigation.IdMarcaNavigation.Nombre
+                        : null,
+                    EstadoCodigo = s.IdEstadoSolicitudNavigation.Codigo,
+                    EstadoNombre = s.IdEstadoSolicitudNavigation.Nombre,
+                    s.FechaSolicitud,
+                    EvidenciasActivas = s.Evidencia.Count(e => e.Activa)
+                })
+                .ToListAsync(ct);
+            return (totalActual, filasActuales);
+        }, cancellationToken);
 
         return new SolicitudListado(
             filas.Select(f => new SolicitudResumen(
@@ -275,17 +280,19 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
     public async Task<SolicitudDetalle?> ObtenerDetalleAsync(
         int idSolicitud, int idSolicitante, CancellationToken cancellationToken)
     {
-        var solicitud = await db.SolicitudEvaluacions
-            .AsNoTracking()
-            .Include(s => s.IdProductoNavigation).ThenInclude(p => p.IdCategoriaNavigation)
-            .Include(s => s.IdProductoNavigation).ThenInclude(p => p.IdMarcaNavigation)
-            .Include(s => s.IdEstadoSolicitudNavigation)
-            .Include(s => s.Evidencia).ThenInclude(e => e.IdTipoEvidenciaNavigation)
-            .Include(s => s.AsignacionEspecialistum!).ThenInclude(a => a.IdEspecialistaNavigation)
-                .ThenInclude(e => e.IdUsuarioNavigation)
-            .Include(s => s.Evaluacion)
-            .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante)
-            .SingleOrDefaultAsync(cancellationToken);
+        var solicitud = await SqlRetry.EjecutarAsync(
+            ct => db.SolicitudEvaluacions
+                .AsNoTracking()
+                .Include(s => s.IdProductoNavigation).ThenInclude(p => p.IdCategoriaNavigation)
+                .Include(s => s.IdProductoNavigation).ThenInclude(p => p.IdMarcaNavigation)
+                .Include(s => s.IdEstadoSolicitudNavigation)
+                .Include(s => s.Evidencia).ThenInclude(e => e.IdTipoEvidenciaNavigation)
+                .Include(s => s.AsignacionEspecialistum!).ThenInclude(a => a.IdEspecialistaNavigation)
+                    .ThenInclude(e => e.IdUsuarioNavigation)
+                .Include(s => s.Evaluacion)
+                .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante)
+                .SingleOrDefaultAsync(ct),
+            cancellationToken);
 
         if (solicitud is null)
             return null;
@@ -451,12 +458,14 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
     public async Task<ArchivoEvidencia?> ObtenerArchivoAsync(
         int idSolicitud, int idEvidencia, int idSolicitante, CancellationToken cancellationToken)
     {
-        var archivo = await db.Evidencia
-            .AsNoTracking()
-            .Where(e => e.IdEvidencia == idEvidencia && e.IdSolicitud == idSolicitud &&
-                e.Activa && e.IdSolicitudNavigation.IdSolicitante == idSolicitante)
-            .Select(e => new ArchivoEvidencia(e.UrlArchivo, e.TipoContenido, e.NombreOriginal))
-            .SingleOrDefaultAsync(cancellationToken);
+        var archivo = await SqlRetry.EjecutarAsync(
+            ct => db.Evidencia
+                .AsNoTracking()
+                .Where(e => e.IdEvidencia == idEvidencia && e.IdSolicitud == idSolicitud &&
+                    e.Activa && e.IdSolicitudNavigation.IdSolicitante == idSolicitante)
+                .Select(e => new ArchivoEvidencia(e.UrlArchivo, e.TipoContenido, e.NombreOriginal))
+                .SingleOrDefaultAsync(ct),
+            cancellationToken);
         return archivo;
     }
 

@@ -9,22 +9,24 @@ public sealed class CredencialesStore(GradeXDbContext db) : ICredencialesStore
     public async Task<CredencialesUsuario?> BuscarPorCorreoAsync(
         string correo, CancellationToken cancellationToken)
     {
-        var datos = await db.Usuarios
-            .AsNoTracking()
-            .Where(u => u.Correo == correo)
-            .Select(u => new
-            {
-                u.IdUsuario,
-                u.NombreCompleto,
-                u.Correo,
-                u.PasswordHash,
-                u.Activo,
-                Roles = u.UsuarioRols
-                    .Where(ur => ur.IdRolNavigation.Activo)
-                    .Select(ur => ur.IdRolNavigation.Nombre)
-                    .ToList()
-            })
-            .SingleOrDefaultAsync(cancellationToken);
+        var datos = await SqlRetry.EjecutarAsync(
+            ct => db.Usuarios
+                .AsNoTracking()
+                .Where(u => u.Correo == correo)
+                .Select(u => new
+                {
+                    u.IdUsuario,
+                    u.NombreCompleto,
+                    u.Correo,
+                    u.PasswordHash,
+                    u.Activo,
+                    Roles = u.UsuarioRols
+                        .Where(ur => ur.IdRolNavigation.Activo)
+                        .Select(ur => ur.IdRolNavigation.Nombre)
+                        .ToList()
+                })
+                .SingleOrDefaultAsync(ct),
+            cancellationToken);
 
         return datos is null
             ? null
