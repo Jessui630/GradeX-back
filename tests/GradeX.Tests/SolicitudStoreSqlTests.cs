@@ -46,6 +46,16 @@ public sealed class SolicitudStoreSqlTests
             Assert.Equal("BORRADOR", Assert.Single(listado.Elementos).EstadoCodigo);
             Assert.Equal(0, (await store.ListarAsync(idOtro, 1, 10, null, CancellationToken.None)).Total);
             Assert.Single((await store.ListarAsync(idUsuario, 1, 1, null, CancellationToken.None)).Elementos);
+            Assert.Equal(1,
+                (await store.ListarAsync(idUsuario, 0, 0, null, CancellationToken.None)).Pagina);
+            Assert.Equal(1,
+                (await store.ListarAsync(idUsuario, 0, 0, null, CancellationToken.None)).TamanoPagina);
+            Assert.Empty((await store.ListarAsync(
+                idUsuario, int.MaxValue, 50, null, CancellationToken.None)).Elementos);
+            Assert.Single((await store.ListarAsync(
+                idUsuario, 1, 10, "BORRADOR", CancellationToken.None)).Elementos);
+            Assert.Empty((await store.ListarAsync(
+                idUsuario, 1, 10, "ESTADO_INEXISTENTE", CancellationToken.None)).Elementos);
 
             Assert.Null(await store.ObtenerDetalleAsync(
                 creada.Solicitud.IdSolicitud, idOtro, CancellationToken.None));
@@ -79,6 +89,11 @@ public sealed class SolicitudStoreSqlTests
             var deNuevo = await store.EnviarAsync(
                 creada.Solicitud.IdSolicitud, idUsuario, CancellationToken.None);
             Assert.Equal(EstadoEnviarSolicitud.Exito, deNuevo.Estado);
+
+            Assert.Single((await store.ListarAsync(
+                idUsuario, 1, 10, "PENDIENTE_ASIGNACION", CancellationToken.None)).Elementos);
+            Assert.Empty((await store.ListarAsync(
+                idUsuario, 2, 1, null, CancellationToken.None)).Elementos);
 
             var detalle = await store.ObtenerDetalleAsync(
                 creada.Solicitud.IdSolicitud, idUsuario, CancellationToken.None);

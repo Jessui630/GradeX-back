@@ -181,7 +181,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
-app.UseExceptionHandler();
+app.UseExceptionHandler(errorApp => errorApp.Run(ApiExceptionHandler.HandleAsync));
 if (app.Configuration.GetValue("ForwardedHeaders:Enabled", false))
     app.UseForwardedHeaders();
 app.UseHttpsRedirection();
