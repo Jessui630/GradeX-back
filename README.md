@@ -165,6 +165,49 @@ POST   /api/solicitudes/{id}/evidencias
 GET    /api/solicitudes
 GET    /api/solicitudes/{id}
 GET    /api/solicitudes/{id}/evidencias/{idEvidencia}/archivo
+
+GET    /api/perfil
+PUT    /api/perfil
+PUT    /api/perfil/contrasena
+GET    /api/notificaciones
+GET    /api/notificaciones/no-leidas
+PATCH  /api/notificaciones/{id}/leida
+PATCH  /api/notificaciones/leer-todas
+
+GET    /api/especialista/asignaciones
+GET    /api/especialista/asignaciones/{id}
+PUT    /api/especialista/asignaciones/{id}/evaluacion
+POST   /api/especialista/asignaciones/{id}/dictamen
+POST   /api/especialista/asignaciones/{id}/solicitar-evidencia
+POST   /api/especialista/asignaciones/{id}/certificado
+GET    /api/especialista/asignaciones/{id}/evidencias/{idEvidencia}/archivo
+
+GET    /api/administracion/solicitudes
+GET    /api/administracion/solicitudes/{id}
+GET    /api/administracion/solicitudes/{id}/especialistas-compatibles
+POST   /api/administracion/solicitudes/{id}/asignacion
+GET    /api/administracion/catalogo/categorias
+POST   /api/administracion/catalogo/categorias
+PUT    /api/administracion/catalogo/categorias/{id}
+GET    /api/administracion/catalogo/marcas
+POST   /api/administracion/catalogo/marcas
+PUT    /api/administracion/catalogo/marcas/{id}
+GET    /api/administracion/catalogo/tipos-evidencia
+GET    /api/administracion/catalogo/categorias/{id}/marcas
+PUT    /api/administracion/catalogo/categorias/{id}/marcas/{idMarca}
+GET    /api/administracion/catalogo/categorias/{id}/requisitos
+PUT    /api/administracion/catalogo/categorias/{id}/requisitos
+GET    /api/administracion/catalogo/categorias/{id}/criterios
+POST   /api/administracion/catalogo/categorias/{id}/criterios
+PUT    /api/administracion/catalogo/criterios/{idCriterio}
+GET    /api/administracion/especialistas
+GET    /api/administracion/especialistas/usuarios
+POST   /api/administracion/especialistas
+PUT    /api/administracion/especialistas/{id}
+
+GET    /api/certificados/solicitud/{idSolicitud}
+GET    /api/certificados/verificar/{token}
+GET    /api/certificados/verificar/numero/{numero}
 ```
 
 Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. `Almacenamiento:Evidencias:Ruta` permite fijar una ruta explícita; si no se configura, en desarrollo se usa `App_Data/evidencias` y en App Service se usa `$HOME/data/evidencias`, que es escribible aunque `WEBSITE_RUN_FROM_PACKAGE=1` monte `wwwroot` como solo lectura. El disco de una instancia de App Service no es almacenamiento durable entre instancias; la integración con Blob Storage privado sigue pendiente de autorización de infraestructura.
@@ -379,3 +422,11 @@ Azure SQL Free, cuando la suscripción sea elegible, ofrece 100.000 vCore-segund
 - No operar sobre bases de producción ni sobre infraestructura de Azure desde el entorno local.
 - Mantener las migraciones históricas sin ediciones manuales.
 - Revisar el diff antes de cada commit y publicar únicamente archivos técnicos.
+
+## SonarQube Cloud, cobertura y auditoría
+
+El repositorio está vinculado a SonarQube Cloud (SonarCloud) mediante la integración de GitHub. El check `SonarCloud Code Analysis` y su Quality Gate se ejecutan sobre los PR; no se crea una instancia SonarQube Server ni se añaden servicios de pago.
+
+`scripts/quality.ps1` genera cobertura real con `coverlet.collector` en `coverage.cobertura.xml` dentro del directorio de resultados, y ejecuta `dotnet list package --vulnerable --include-transitive`. El CI publica ambos artefactos y falla si aparecen paquetes vulnerables o si no se genera cobertura. No se fija un porcentaje mínimo ni se declaran porcentajes manualmente.
+
+El análisis automático de SonarCloud no importa cobertura. Para importarla hace falta configurar el secreto `SONAR_TOKEN` y un scanner con `sonar.cs.cobertura.reportsPaths` apuntando al XML. Ese scanner debe sustituir al análisis automático, no duplicarlo. Sin token no se declara cobertura importada.
