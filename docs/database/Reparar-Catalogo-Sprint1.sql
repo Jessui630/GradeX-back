@@ -150,6 +150,15 @@ BEGIN TRY
     WHERE c.Activa = 0;
     */
 
+    -- La reparación equivale a la migración 20261118191412_RepararCatalogoSprint1.
+    -- Registrar la migración evita que EF la vuelva a ejecutar en un database update
+    -- posterior. Es idempotente y solo se inserta si falta.
+    IF NOT EXISTS (
+        SELECT 1 FROM dbo.__EFMigrationsHistory
+        WHERE MigrationId = N'20261118191412_RepararCatalogoSprint1')
+        INSERT INTO dbo.__EFMigrationsHistory (MigrationId, ProductVersion)
+        VALUES (N'20261118191412_RepararCatalogoSprint1', N'10.0.13');
+
     COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH

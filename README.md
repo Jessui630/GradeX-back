@@ -187,7 +187,7 @@ sqlcmd -S sql-gradex-students.database.windows.net -d GradeX_DevCloud -G -I \
   -i docs/database/Reparar-Catalogo-Sprint1.sql
 ```
 
-La reparación no elimina datos y está respaldada por los mismos requisitos de la migración del Sprint 1: 8 categorías, 7 tipos de evidencia, campo `NOMBRE` obligatorio y `VISTA_GENERAL` obligatoria con máximo 1. Debe probarse primero en una base aislada y **requiere autorización explícita antes de ejecutarse en Azure**. Si el diagnóstico muestra categorías oficiales con `Activa = 0`, el bloque opcional de reactivación del script está comentado para que la decisión quede revisada.
+La reparación no elimina datos y está respaldada por los mismos requisitos de la migración del Sprint 1: 8 categorías, 7 tipos de evidencia, campo `NOMBRE` obligatorio y `VISTA_GENERAL` obligatoria con máximo 1. Al terminar registra `20261118191412_RepararCatalogoSprint1` en `__EFMigrationsHistory` para que EF no repita la reparación. Debe probarse primero en una base aislada y **requiere autorización explícita antes de ejecutarse en Azure**. Si el diagnóstico muestra categorías oficiales con `Activa = 0`, el bloque opcional de reactivación del script está comentado para que la decisión quede revisada.
 
 ### Publicación del registro en producción
 
