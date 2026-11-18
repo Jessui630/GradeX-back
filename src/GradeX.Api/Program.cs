@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Claims;
 using System.Threading.RateLimiting;
 using GradeX.Api.Security;
 using GradeX.Application.Cuentas;
@@ -48,14 +49,12 @@ builder.Services.AddScoped<IniciarSesion>();
 builder.Services.AddScoped<RegistrarSolicitud>();
 builder.Services.AddScoped<AgregarEvidencia>();
 builder.Services.AddScoped<ISesionStore, SesionStore>();
-builder.Services.AddSingleton<IEvidenciaStorage>(_ =>
-{
-    var ruta = builder.Configuration.GetValue<string>("Almacenamiento:Evidencias:Ruta")
-        ?? Path.Combine("App_Data", "evidencias");
-    return new LocalEvidenciaStorage(Path.IsPathRooted(ruta)
-        ? ruta
-        : Path.Combine(builder.Environment.ContentRootPath, ruta));
-});
+var rutaEvidencias = EvidenciaStoragePath.Resolver(
+    builder.Configuration.GetValue<string>("Almacenamiento:Evidencias:Ruta"),
+    builder.Environment.ContentRootPath,
+    builder.Environment.IsDevelopment(),
+    Environment.GetEnvironmentVariable("HOME"));
+builder.Services.AddSingleton<IEvidenciaStorage>(_ => new LocalEvidenciaStorage(rutaEvidencias));
 
 builder.Services.AddAuthentication(SesionConstantes.Esquema)
     .AddScheme<AuthenticationSchemeOptions, SesionAuthenticationHandler>(
@@ -96,19 +95,21 @@ builder.Services.AddRateLimiter(options =>
     var registroMinutos = builder.Configuration.GetValue("RateLimiting:Registro:WindowMinutes", 10);
     var loginLimite = builder.Configuration.GetValue("RateLimiting:Login:PermitLimit", 10);
     var loginMinutos = builder.Configuration.GetValue("RateLimiting:Login:WindowMinutes", 10);
-    var solicitudesLimite = builder.Configuration.GetValue("RateLimiting:Solicitudes:PermitLimit", 60);
+    var solicitudesLimite = builder.Configuration.GetValue("RateLimiting:Solicitudes:PermitLimit", 120);
     var solicitudesMinutos = builder.Configuration.GetValue("RateLimiting:Solicitudes:WindowMinutes", 60);
-    var globalLimite = builder.Configuration.GetValue("RateLimiting:Global:PermitLimit", 100);
+    var globalLimite = builder.Configuration.GetValue("RateLimiting:Global:PermitLimit", 600);
     var globalMinutos = builder.Configuration.GetValue("RateLimiting:Global:WindowMinutes", 60);
 
-    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ =>
-        RateLimitPartition.GetFixedWindowLimiter("instancia", _ => new FixedWindowRateLimiterOptions
-        {
-            PermitLimit = globalLimite,
-            Window = TimeSpan.FromMinutes(globalMinutos),
-            QueueLimit = 0,
-            AutoReplenishment = true
-        }));
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ClaveParticion(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = globalLimite,
+                Window = TimeSpan.FromMinutes(globalMinutos),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
 
     options.AddPolicy("registro", context =>
         RateLimitPartition.GetFixedWindowLimiter(
@@ -134,7 +135,7 @@ builder.Services.AddRateLimiter(options =>
 
     options.AddPolicy("solicitudes", context =>
         RateLimitPartition.GetFixedWindowLimiter(
-            context.Connection.RemoteIpAddress?.ToString() ?? "sin-ip",
+            ClaveParticion(context),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = solicitudesLimite,
@@ -186,12 +187,17 @@ if (app.Configuration.GetValue("ForwardedHeaders:Enabled", false))
     app.UseForwardedHeaders();
 app.UseHttpsRedirection();
 app.UseCors("Frontend");
-app.UseRateLimiter();
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();
 
 app.Run();
+
+static string ClaveParticion(HttpContext context) =>
+    context.User.FindFirstValue(ClaimTypes.NameIdentifier) is { Length: > 0 } id
+        ? $"usuario:{id}"
+        : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "sin-ip"}";
 
 public partial class Program { }

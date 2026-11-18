@@ -3,6 +3,15 @@
 -- Generado con: dotnet ef migrations script 20261022203833_AddCertificateSpecialtyReference 20261111190603_SeedRolesOperativos --idempotent
 -- Revisar el servidor y la base de destino antes de ejecutar. No ejecutar sin autorizacion.
 -- No ejecutar Down ni recrear la base. Recuperacion ante fallo: restaurar/PITR segun el procedimiento aprobado.
+--
+-- Importante: el indice filtrado UQ_Solicitud_Idempotencia exige QUOTED_IDENTIFIER ON.
+-- Sin estas opciones, sqlcmd falla con el error 1934 y revierte la transaccion.
+-- Para reparar el catalogo de una base que ya tiene la migracion registrada,
+-- ejecutar despues docs/database/Reparar-Catalogo-Sprint1.sql con autorizacion.
+
+SET ANSI_NULLS ON;
+SET QUOTED_IDENTIFIER ON;
+SET XACT_ABORT ON;
 
 BEGIN TRANSACTION;
 IF NOT EXISTS (

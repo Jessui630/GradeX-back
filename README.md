@@ -128,6 +128,7 @@ Migraciones incluidas:
 3. `20261022203833_AddCertificateSpecialtyReference`: columna nullable `Certificado.IdEspecialidad`, índice `IX_Certificado_IdEspecialidad` y clave foránea `FK_Certificado_Especialidad` con `NO ACTION`.
 4. `20261108214534_AddSprint1Solicitudes`: sesiones persistentes, idempotencia de solicitudes, requisitos por categoría, metadatos de evidencia y datos iniciales de catálogo/estados/tipos de evidencia.
 5. `20261111190603_SeedRolesOperativos`: siembra idempotente de los roles base `Solicitante`, `Especialista` y `Administrador`. Falla de forma explícita si `Solicitante` existe inactivo, para exigir revisión manual.
+6. `20261118191412_RepararCatalogoSprint1`: reparación idempotente del catálogo oficial. Restaura estados, tipos de evidencia, categorías y requisitos ausentes aunque la migración histórica ya esté registrada, y corrige `VISTA_GENERAL` a mínimo 1/máximo 1. No elimina catálogo ni sobrescribe requisitos personalizados.
 
 Los scripts de referencia del esquema histórico están en `docs/database/InitialSchema.sql` y `docs/database/RestoreCheckConstraints.sql`.
 
@@ -166,9 +167,27 @@ GET    /api/solicitudes/{id}
 GET    /api/solicitudes/{id}/evidencias/{idEvidencia}/archivo
 ```
 
-Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. La ruta local `Almacenamiento:Evidencias:Ruta` es para desarrollo; el disco de una instancia de App Service no es almacenamiento durable. La integración con Blob Storage privado queda pendiente de autorización de infraestructura.
+Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. `Almacenamiento:Evidencias:Ruta` permite fijar una ruta explícita; si no se configura, en desarrollo se usa `App_Data/evidencias` y en App Service se usa `$HOME/data/evidencias`, que es escribible aunque `WEBSITE_RUN_FROM_PACKAGE=1` monte `wwwroot` como solo lectura. El disco de una instancia de App Service no es almacenamiento durable entre instancias; la integración con Blob Storage privado sigue pendiente de autorización de infraestructura.
 
-`Sesion:DuracionMinutos`, `Sesion:CrossSite`, `ForwardedHeaders:Enabled`, `ForwardedHeaders:KnownProxies`, `RateLimiting:*` y `Cors:AllowedOrigins` se configuran en `appsettings.json` o por variables de entorno. No incluir secretos en el repositorio.
+`Sesion:DuracionMinutos`, `Sesion:CrossSite`, `ForwardedHeaders:Enabled`, `ForwardedHeaders:KnownProxies`, `RateLimiting:*` y `Cors:AllowedOrigins` se configuran en `appsettings.json` o por variables de entorno. No incluir secretos en el repositorio. El limitador global se particiona por IP y su valor predeterminado es 600 solicitudes por hora; el de solicitudes es 120 por hora. Los valores son configurables y no deben bajarse por debajo de lo que exige un recorrido completo.
+
+### Diagnóstico y reparación del catálogo
+
+La PWA muestra el paso Categoría vacío cuando `GET /api/catalogo/categorias` devuelve una lista vacía. Antes de tocar datos, ejecutar el diagnóstico de solo lectura:
+
+```bash
+sqlcmd -S sql-gradex-students.database.windows.net -d GradeX_DevCloud -G -I \
+  -i docs/database/Diagnostico-Catalogo.sql
+```
+
+El diagnóstico informa la historia de migraciones, los conteos de catálogo, las categorías sin evidencia obligatoria y las categorías oficiales ausentes o inactivas. Si faltan filas, el script idempotente de reparación es:
+
+```bash
+sqlcmd -S sql-gradex-students.database.windows.net -d GradeX_DevCloud -G -I \
+  -i docs/database/Reparar-Catalogo-Sprint1.sql
+```
+
+La reparación no elimina datos y está respaldada por los mismos requisitos de la migración del Sprint 1: 8 categorías, 7 tipos de evidencia, campo `NOMBRE` obligatorio y `VISTA_GENERAL` obligatoria con máximo 1. Debe probarse primero en una base aislada y **requiere autorización explícita antes de ejecutarse en Azure**. Si el diagnóstico muestra categorías oficiales con `Activa = 0`, el bloque opcional de reactivación del script está comentado para que la decisión quede revisada.
 
 ### Publicación del registro en producción
 
@@ -185,11 +204,12 @@ La release desplegada antes de este cambio no contiene el Sprint 1 y responde `4
      --startup-project src/GradeX.Api
    ```
 
-   El script crea `SesionUsuario`, los requisitos por categoría, las columnas de idempotencia/evidencia y siembra los roles base. No elimina datos.
+   El script crea `SesionUsuario`, los requisitos por categoría, las columnas de idempotencia/evidencia y siembra los roles base. Incluye `SET QUOTED_IDENTIFIER ON` porque el índice filtrado `UQ_Solicitud_Idempotencia` lo exige. No elimina datos. Si la migración ya estaba registrada pero el catálogo quedó vacío, ejecutar además `docs/database/Reparar-Catalogo-Sprint1.sql` con autorización.
 
 2. Promover el código con Sprint 1 a `release` y ejecutar el workflow manual existente `Deploy GradeX.Api to Azure App Service (manual)` con `DEPLOY`. El smoke posterior comprueba `/api/health`, `/api/sesiones/csrf` y que `POST /api/cuentas` exista y responda `400` ante un cuerpo vacío, sin crear cuentas.
 3. Verificar `GET /api/health`, `GET /api/sesiones/csrf` y `POST /api/cuentas` desde el host público.
-4. Probar un registro sintético autorizado y confirmar el alta en `Usuario`, el vínculo `UsuarioRol` y el inicio de sesión. Eliminar la cuenta sintética al terminar.
+4. Confirmar con el diagnóstico de solo lectura que hay 8 categorías activas y que `VISTA_GENERAL` tiene máximo 1.
+5. Probar un registro sintético autorizado y confirmar el alta en `Usuario`, el vínculo `UsuarioRol` y el inicio de sesión. Recorrer Categoría → Producto → Evidencias → Revisión → Envío → Mis solicitudes → Detalle y comprobar que la evidencia se puede volver a descargar. Eliminar la cuenta sintética y sus datos al terminar con el procedimiento SQL autorizado.
 
 No se debe publicar una cuenta de prueba real ni ejecutar la prueba hasta que la migración y el despliegue estén autorizados.
 
