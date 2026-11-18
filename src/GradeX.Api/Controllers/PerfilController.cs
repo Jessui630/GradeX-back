@@ -1,5 +1,6 @@
 using GradeX.Api.Security;
 using GradeX.Application.Perfil;
+using GradeX.Application.Sesiones;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
@@ -21,7 +22,8 @@ public sealed record CambiarContrasenaRequest(
 public sealed class PerfilController(
     IPerfilStore perfil,
     ActualizarPerfil actualizarPerfil,
-    CambiarContrasena cambiarContrasena) : ApiControllerBase
+    CambiarContrasena cambiarContrasena,
+    ISesionStore sesiones) : ApiControllerBase
 {
     [HttpGet]
     [ProducesResponseType<PerfilUsuario>(StatusCodes.Status200OK)]
@@ -83,7 +85,11 @@ public sealed class PerfilController(
             new DatosCambioContrasena(request.ContrasenaActual, request.ContrasenaNueva),
             cancellationToken);
         if (resultado.Estado == EstadoPerfil.Exito)
+        {
+            await sesiones.EliminarTodasAsync(idUsuario, cancellationToken);
+            Response.Cookies.Delete(SesionConstantes.Cookie);
             return NoContent();
+        }
         return Resultado(resultado);
     }
 

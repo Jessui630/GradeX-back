@@ -66,6 +66,39 @@ public sealed class SesionStoreSqlTests
     }
 
     [LocalDbFact]
+    public async Task EliminarTodasRevocaSoloLasSesionesDelUsuario()
+    {
+        var correo = $"sesion-{Guid.NewGuid():N}@example.test";
+        var otroCorreo = $"sesion-{Guid.NewGuid():N}@example.test";
+        await using var db = await SqlIntegration.AbrirContextoAsync();
+        var idUsuario = await SqlIntegration.CrearUsuarioAsync(db, correo);
+        var idOtro = await SqlIntegration.CrearUsuarioAsync(db, otroCorreo);
+        try
+        {
+            var store = new SesionStore(db);
+            var primera = await store.CrearAsync(
+                new UsuarioAutenticado(idUsuario, "Usuario", correo, ["Solicitante"]),
+                TimeSpan.FromMinutes(5), CancellationToken.None);
+            var segunda = await store.CrearAsync(
+                new UsuarioAutenticado(idUsuario, "Usuario", correo, ["Solicitante"]),
+                TimeSpan.FromMinutes(5), CancellationToken.None);
+            var ajena = await store.CrearAsync(
+                new UsuarioAutenticado(idOtro, "Otro", otroCorreo, ["Solicitante"]),
+                TimeSpan.FromMinutes(5), CancellationToken.None);
+
+            Assert.Equal(2, await store.EliminarTodasAsync(idUsuario, CancellationToken.None));
+            Assert.Null(await store.ObtenerAsync(primera.Token, CancellationToken.None));
+            Assert.Null(await store.ObtenerAsync(segunda.Token, CancellationToken.None));
+            Assert.NotNull(await store.ObtenerAsync(ajena.Token, CancellationToken.None));
+        }
+        finally
+        {
+            await SqlIntegration.LimpiarUsuarioAsync(db, correo);
+            await SqlIntegration.LimpiarUsuarioAsync(db, otroCorreo);
+        }
+    }
+
+    [LocalDbFact]
     public async Task SesionExpiradaNoEsValida()
     {
         var correo = $"sesion-{Guid.NewGuid():N}@example.test";

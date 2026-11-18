@@ -93,6 +93,19 @@ public sealed class SesionStore(GradeXDbContext db) : ISesionStore
             .ExecuteUpdateAsync(update => update.SetProperty(s => s.FechaRevocacion, ahora), cancellationToken);
     }
 
+    public async Task<int> EliminarTodasAsync(
+        int idUsuario, CancellationToken cancellationToken)
+    {
+        if (idUsuario <= 0)
+            return 0;
+
+        var ahora = DateTime.UtcNow;
+        return await db.SesionUsuarios
+            .Where(s => s.IdUsuario == idUsuario && s.FechaRevocacion == null)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(s => s.FechaRevocacion, ahora), cancellationToken);
+    }
+
     private static string Hash(string token) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)));
 }
