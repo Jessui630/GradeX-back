@@ -6,11 +6,23 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GradeX.Infrastructure.Persistence.Commands;
 
-public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
+public sealed class SolicitudStore : ISolicitudStore
 {
     private const string EstadoBorrador = "BORRADOR";
     private const string EstadoPendiente = "PENDIENTE_ASIGNACION";
     private const int MaxEvidenciasPorSolicitud = 12;
+    private readonly GradeXDbContext db;
+    private readonly NotificacionWriter notificaciones;
+
+    public SolicitudStore(GradeXDbContext db) : this(db, new NotificacionWriter(db))
+    {
+    }
+
+    public SolicitudStore(GradeXDbContext db, NotificacionWriter notificaciones)
+    {
+        this.db = db;
+        this.notificaciones = notificaciones;
+    }
 
     public async Task<ResultadoCrearSolicitud> CrearBorradorAsync(
         DatosNuevaSolicitud datos, int idSolicitante, CancellationToken cancellationToken)
@@ -290,6 +302,9 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
                 .Include(s => s.AsignacionEspecialistum!).ThenInclude(a => a.IdEspecialistaNavigation)
                     .ThenInclude(e => e.IdUsuarioNavigation)
                 .Include(s => s.Evaluacion)
+                    .ThenInclude(e => e!.ResultadoCriterios)
+                    .ThenInclude(r => r.IdCriterioNavigation)
+                .AsSplitQuery()
                 .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante)
                 .SingleOrDefaultAsync(ct),
             cancellationToken);
@@ -338,6 +353,29 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
                 seguimiento.Add(new(solicitud.Evaluacion.FechaFin.Value, "Evaluación finalizada", null));
         }
 
+        var evidenciaAdicional = await db.Notificacions
+            .AsNoTracking()
+            .Where(n => n.IdSolicitud == idSolicitud &&
+                n.IdTipoNotificacionNavigation.Codigo ==
+                    GradeX.Application.Workflow.FlujoGradeX.TiposNotificacion.SolicitudEvidencia)
+            .OrderByDescending(n => n.FechaCreacion)
+            .ThenByDescending(n => n.IdNotificacion)
+            .Select(n => n.Mensaje)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var resultadosEvaluacion = solicitud.Evaluacion?.ResultadoCriterios
+            .OrderBy(r => r.IdCriterioNavigation.Orden)
+            .ThenBy(r => r.IdCriterioNavigation.Nombre)
+            .Select(r => new ResultadoCriterioDetalle(
+                r.IdCriterio,
+                r.IdCriterioNavigation.Nombre,
+                r.IdCriterioNavigation.TipoDato,
+                r.ValorTexto,
+                r.ValorNumerico,
+                r.ValorBooleano,
+                r.Observacion))
+            .ToList() ?? [];
+
         return new SolicitudDetalle(
             solicitud.IdSolicitud,
             solicitud.Folio,
@@ -363,7 +401,9 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
             seguimiento.OrderBy(e => e.Fecha).ToList(),
             especialista,
             evaluacion,
-            CertificadoDisponible: false);
+            CertificadoDisponible: false,
+            EvidenciaAdicionalSolicitada: evidenciaAdicional,
+            ResultadosEvaluacion: resultadosEvaluacion);
     }
 
     public async Task<ResultadoAgregarEvidencia> AgregarEvidenciaAsync(
@@ -380,17 +420,20 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
     {
         var solicitud = await db.SolicitudEvaluacions
             .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante)
-            .Select(s => new
-            {
-                s.IdSolicitud,
-                s.IdProductoNavigation.IdCategoria,
-                EstadoCodigo = s.IdEstadoSolicitudNavigation.Codigo
-            })
             .SingleOrDefaultAsync(cancellationToken);
 
         if (solicitud is null)
             return new ResultadoAgregarEvidencia(EstadoAgregarEvidencia.NoEncontrada);
-        if (solicitud.EstadoCodigo != EstadoBorrador)
+
+        var estadoCodigo = await db.EstadoSolicituds
+            .AsNoTracking()
+            .Where(e => e.IdEstadoSolicitud == solicitud.IdEstadoSolicitud)
+            .Select(e => e.Codigo)
+            .SingleAsync(cancellationToken);
+        var esBorrador = estadoCodigo == EstadoBorrador;
+        var faltaEvidencia = estadoCodigo ==
+            GradeX.Application.Workflow.FlujoGradeX.EstadosSolicitud.FaltaEvidencia;
+        if (!esBorrador && !faltaEvidencia)
             return new ResultadoAgregarEvidencia(EstadoAgregarEvidencia.EstadoInvalido);
 
         var totalActivas = await db.Evidencia
@@ -399,10 +442,15 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
         if (totalActivas >= MaxEvidenciasPorSolicitud)
             return new ResultadoAgregarEvidencia(EstadoAgregarEvidencia.LimiteAlcanzado);
 
+        var idCategoria = await db.Productos
+            .AsNoTracking()
+            .Where(p => p.IdProducto == solicitud.IdProducto)
+            .Select(p => p.IdCategoria)
+            .SingleAsync(cancellationToken);
         var requisito = await db.CategoriaEvidenciaRequisitos
             .AsNoTracking()
             .Include(r => r.IdTipoEvidenciaNavigation)
-            .Where(r => r.IdCategoria == solicitud.IdCategoria && r.IdTipoEvidencia == idTipoEvidencia)
+            .Where(r => r.IdCategoria == idCategoria && r.IdTipoEvidencia == idTipoEvidencia)
             .SingleOrDefaultAsync(cancellationToken);
         if (requisito is null)
             return new ResultadoAgregarEvidencia(EstadoAgregarEvidencia.TipoNoPermitido);
@@ -424,6 +472,19 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
             claveAnterior = anterior.UrlArchivo;
         }
 
+        EstadoSolicitud? estadoEvaluacion = null;
+        if (faltaEvidencia)
+        {
+            estadoEvaluacion = await db.EstadoSolicituds
+                .AsNoTracking()
+                .SingleOrDefaultAsync(
+                    e => e.Codigo ==
+                        GradeX.Application.Workflow.FlujoGradeX.EstadosSolicitud.EnEvaluacion,
+                    cancellationToken);
+            if (estadoEvaluacion is null)
+                return new ResultadoAgregarEvidencia(EstadoAgregarEvidencia.EstadoInvalido);
+        }
+
         var evidencia = new Evidencium
         {
             IdSolicitud = idSolicitud,
@@ -438,6 +499,27 @@ public sealed class SolicitudStore(GradeXDbContext db) : ISolicitudStore
             Activa = true
         };
         db.Evidencia.Add(evidencia);
+
+        if (faltaEvidencia && estadoEvaluacion is not null)
+        {
+            solicitud.IdEstadoSolicitud = estadoEvaluacion.IdEstadoSolicitud;
+            solicitud.FechaUltimoCambio = DateTime.UtcNow;
+
+            var idUsuarioEspecialista = await db.AsignacionEspecialista
+                .AsNoTracking()
+                .Where(a => a.IdSolicitud == idSolicitud && a.Activa)
+                .Select(a => (int?)a.IdEspecialistaNavigation.IdUsuario)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (idUsuarioEspecialista is > 0)
+                await notificaciones.CrearAsync(
+                    idUsuarioEspecialista.Value,
+                    idSolicitud,
+                    GradeX.Application.Workflow.FlujoGradeX.TiposNotificacion.EvidenciaRecibida,
+                    "Evidencia adicional recibida",
+                    $"El solicitante adjuntó evidencia adicional para la solicitud {solicitud.Folio}.",
+                    cancellationToken);
+        }
+
         await db.SaveChangesAsync(cancellationToken);
 
         return new ResultadoAgregarEvidencia(

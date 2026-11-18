@@ -50,6 +50,8 @@ try {
     $restoreCode = Invoke-DotnetLogged 'restore' @('restore', 'GradeX.slnx', '--nologo')
     $buildCode = $null
     $testCode = $null
+    $auditCode = $null
+    $auditVulnerable = $false
     if ($sdkCode -eq 0 -and $restoreCode -eq 0) {
         $buildCode = Invoke-DotnetLogged 'analysis' @(
             'build', 'GradeX.slnx', '--no-restore', '--configuration', 'Release',
@@ -57,9 +59,18 @@ try {
             "-p:QualityOutputDirectory=$sarifDirectory"
         )
         if ($buildCode -eq 0) {
+            $auditCode = Invoke-DotnetLogged 'audit' @(
+                'list', 'GradeX.slnx', 'package', '--vulnerable', '--include-transitive'
+            )
+            $auditLog = Join-Path $output 'audit.log'
+            if (Test-Path $auditLog) {
+                $auditVulnerable = [bool](Select-String -Path $auditLog `
+                    -Pattern 'has the following vulnerable packages' -Quiet)
+            }
             $testCode = Invoke-DotnetLogged 'tests' @(
                 'test', 'GradeX.slnx', '--no-build', '--no-restore', '--configuration', 'Release',
                 '--nologo', '--logger', 'trx;LogFileName=tests.trx',
+                '--collect:XPlat Code Coverage',
                 '--results-directory', (Join-Path $output 'tests')
             )
         }
@@ -93,6 +104,9 @@ try {
     $missingProjects = @($expectedProjects | Where-Object { -not (Test-Path (Join-Path $sarifDirectory "$_.sarif")) })
     $warnings = @($diagnostics | Where-Object { $_.level -eq 'warning' -and -not $_.suppressed }).Count
     $errors = @($diagnostics | Where-Object { $_.level -eq 'error' -and -not $_.suppressed }).Count
+    $coverageReports = @(Get-ChildItem (Join-Path $output 'tests') `
+        -Recurse -Filter 'coverage.cobertura.xml' -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.FullName })
     $buildLogWarnings = 0
     foreach ($logName in @('restore.log', 'analysis.log')) {
         $logPath = Join-Path $output $logName
@@ -101,7 +115,8 @@ try {
         }
     }
     $success = $sdkCode -eq 0 -and $restoreCode -eq 0 -and $buildCode -eq 0 -and
-        $testCode -eq 0 -and $missingProjects.Count -eq 0 -and $errors -eq 0
+        $testCode -eq 0 -and $auditCode -eq 0 -and -not $auditVulnerable -and
+        $coverageReports.Count -gt 0 -and $missingProjects.Count -eq 0 -and $errors -eq 0
     if ($FailOnWarnings -and ($warnings -gt 0 -or $buildLogWarnings -gt 0)) { $success = $false }
     $summary = [pscustomobject]@{
         finishedUtc = [DateTime]::UtcNow.ToString('o')
@@ -113,6 +128,10 @@ try {
         suppressedDiagnostics = @($diagnostics | Where-Object { $_.suppressed }).Count
         notes = @($diagnostics | Where-Object { $_.level -eq 'note' -and -not $_.suppressed }).Count
         logWarningLinesIncludingBuildSummaryDuplicates = $buildLogWarnings
+        coverageReports = @($coverageReports)
+        dependencyAudit = [pscustomobject]@{
+            exitCode = $auditCode; vulnerable = $auditVulnerable; log = 'audit.log'
+        }
         diagnostics = @($diagnostics); success = $success
     }
     $summary | ConvertTo-Json -Depth 12 | Set-Content (Join-Path $output 'summary.json') -Encoding utf8

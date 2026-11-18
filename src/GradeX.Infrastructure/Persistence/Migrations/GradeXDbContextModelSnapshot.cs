@@ -959,6 +959,11 @@ namespace GradeX.Infrastructure.Persistence.Migrations
                         .HasMaxLength(255)
                         .HasColumnType("nvarchar(255)");
 
+                    b.Property<bool>("RecibirNotificaciones")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true, "DF_Usuario_RecibirNotificaciones");
+
                     b.HasKey("IdUsuario");
 
                     b.HasIndex(new[] { "Correo" }, "UQ_Usuario_Correo")

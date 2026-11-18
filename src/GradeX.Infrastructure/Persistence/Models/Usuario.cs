@@ -15,6 +15,8 @@ public partial class Usuario
 
     public bool Activo { get; set; }
 
+    public bool RecibirNotificaciones { get; set; }
+
     public DateTime FechaCreacion { get; set; }
 
     public DateTime? FechaActualizacion { get; set; }

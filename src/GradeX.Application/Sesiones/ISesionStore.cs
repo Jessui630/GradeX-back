@@ -19,4 +19,6 @@ public interface ISesionStore
     Task<SesionActiva?> ObtenerAsync(string? token, CancellationToken cancellationToken);
 
     Task EliminarAsync(string? token, CancellationToken cancellationToken);
+
+    Task<int> EliminarTodasAsync(int idUsuario, CancellationToken cancellationToken);
 }

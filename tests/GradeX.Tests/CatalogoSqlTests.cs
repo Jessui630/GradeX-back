@@ -42,10 +42,8 @@ public sealed class CatalogoSqlTests
 
         Assert.NotEmpty(categorias);
         foreach (var nombre in CategoriasOficiales)
-            Assert.Contains(categorias, c => c.Nombre == nombre);
-
-        foreach (var categoria in categorias)
         {
+            var categoria = Assert.Single(categorias, c => c.Nombre == nombre);
             var requisitos = await new CatalogoProductoStore(db)
                 .ObtenerRequisitosAsync(categoria.IdCategoria, CancellationToken.None);
 
@@ -118,12 +116,19 @@ public sealed class CatalogoSqlTests
     }
 
     private static async Task<(int Categorias, int Tipos, int Campos, int Evidencias, int Estados)>
-        ContarCatalogoAsync(GradeXDbContext db) =>
-        (
-            await db.Categoria.CountAsync(),
+        ContarCatalogoAsync(GradeXDbContext db)
+    {
+        var ids = await db.Categoria
+            .AsNoTracking()
+            .Where(c => CategoriasOficiales.Contains(c.Nombre))
+            .Select(c => c.IdCategoria)
+            .ToListAsync();
+        return (
+            ids.Count,
             await db.TipoEvidencia.CountAsync(),
-            await db.CategoriaCampoRequisitos.CountAsync(),
-            await db.CategoriaEvidenciaRequisitos.CountAsync(),
+            await db.CategoriaCampoRequisitos.CountAsync(r => ids.Contains(r.IdCategoria)),
+            await db.CategoriaEvidenciaRequisitos.CountAsync(r => ids.Contains(r.IdCategoria)),
             await db.EstadoSolicituds.CountAsync()
         );
+    }
 }
