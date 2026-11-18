@@ -1,3 +1,4 @@
+using GradeX.Api.Security;
 using GradeX.Application.Notificaciones;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -38,6 +39,7 @@ public sealed class NotificacionesController(INotificacionStore notificaciones) 
     }
 
     [HttpPatch("{id:long}/leida")]
+    [ValidateCsrf]
     [EnableRateLimiting("solicitudes")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound)]
@@ -53,6 +55,7 @@ public sealed class NotificacionesController(INotificacionStore notificaciones) 
     }
 
     [HttpPatch("leer-todas")]
+    [ValidateCsrf]
     [EnableRateLimiting("solicitudes")]
     [ProducesResponseType<ContadorNoLeidas>(StatusCodes.Status200OK)]
     public async Task<IActionResult> MarcarTodas(CancellationToken cancellationToken)
