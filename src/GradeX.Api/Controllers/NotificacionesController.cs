@@ -9,7 +9,7 @@ namespace GradeX.Api.Controllers;
 [Authorize]
 [Route("api/notificaciones")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class NotificacionesController(INotificacionStore notificaciones) : ControllerBase
+public sealed class NotificacionesController(INotificacionStore notificaciones) : ApiControllerBase
 {
     [HttpGet]
     [ProducesResponseType<ListadoNotificaciones>(StatusCodes.Status200OK)]
@@ -65,23 +65,6 @@ public sealed class NotificacionesController(INotificacionStore notificaciones) 
         return Ok(new ContadorNoLeidas(0, actualizadas));
     }
 
-    private bool TryObtenerUsuario(out int idUsuario) =>
-        int.TryParse(
-            User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value,
-            System.Globalization.NumberStyles.Integer,
-            System.Globalization.CultureInfo.InvariantCulture,
-            out idUsuario) && idUsuario > 0;
-
-    private static ObjectResult NoAutenticado() =>
-        Problema(StatusCodes.Status401Unauthorized, "No autenticado",
-            "Inicia sesión para continuar.");
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
-        };
 }
 
 public sealed record ContadorNoLeidas(int NoLeidas, int Actualizadas = 0);

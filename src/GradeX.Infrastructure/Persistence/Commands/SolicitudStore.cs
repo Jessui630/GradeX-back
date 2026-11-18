@@ -304,6 +304,7 @@ public sealed class SolicitudStore : ISolicitudStore
                 .Include(s => s.Evaluacion)
                     .ThenInclude(e => e!.ResultadoCriterios)
                     .ThenInclude(r => r.IdCriterioNavigation)
+                .AsSplitQuery()
                 .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante)
                 .SingleOrDefaultAsync(ct),
             cancellationToken);

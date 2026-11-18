@@ -1,5 +1,4 @@
-using System.Globalization;
-using System.Security.Claims;
+﻿using System.Text.Json.Serialization;
 using GradeX.Api.Security;
 using GradeX.Application.Administracion;
 using Microsoft.AspNetCore.Authorization;
@@ -12,23 +11,31 @@ public sealed record CategoriaRequest(string? Nombre, string? Descripcion, bool?
 public sealed record MarcaRequest(string? Nombre, bool? Activa);
 public sealed record CriterioRequest(
     string? Nombre, string? Descripcion, string? TipoDato,
-    bool Obligatorio, short Orden, bool Activo);
+    [property: JsonRequired] bool Obligatorio,
+    [property: JsonRequired] short Orden,
+    [property: JsonRequired] bool Activo);
 public sealed record RequisitoCampoRequest(
-    string? Campo, bool Obligatorio, int? LongitudMaxima, int Orden);
+    string? Campo,
+    [property: JsonRequired] bool Obligatorio,
+    int? LongitudMaxima,
+    [property: JsonRequired] int Orden);
 public sealed record RequisitoEvidenciaRequest(
-    int IdTipoEvidencia, bool Obligatorio, int CantidadMinima,
-    int CantidadMaxima, int Orden);
+    [property: JsonRequired] int IdTipoEvidencia,
+    [property: JsonRequired] bool Obligatorio,
+    [property: JsonRequired] int CantidadMinima,
+    [property: JsonRequired] int CantidadMaxima,
+    [property: JsonRequired] int Orden);
 public sealed record RequisitosCategoriaRequest(
     IReadOnlyList<RequisitoCampoRequest>? Campos,
     IReadOnlyList<RequisitoEvidenciaRequest>? Evidencias);
-public sealed record VinculoMarcaRequest(bool Activa);
+public sealed record VinculoMarcaRequest([property: JsonRequired] bool Activa);
 
 [ApiController]
 [Authorize(Policy = "Administrador")]
 [Route("api/administracion/catalogo")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class AdministracionCatalogoController(
-    ICatalogoAdminStore catalogo) : ControllerBase
+    ICatalogoAdminStore catalogo) : ApiControllerBase
 {
     [HttpGet("categorias")]
     [ProducesResponseType<IReadOnlyList<CategoriaAdmin>>(StatusCodes.Status200OK)]
@@ -52,7 +59,7 @@ public sealed class AdministracionCatalogoController(
         var resultado = await catalogo.CrearCategoriaAsync(
             new DatosCategoriaAdmin(request.Nombre, request.Descripcion,
                 request.Activa ?? true), cancellationToken);
-        return Resultado(resultado, creado: true);
+        return ResultadoAdmin(resultado, creado: true);
     }
 
     [HttpPut("categorias/{id:int}")]
@@ -74,7 +81,7 @@ public sealed class AdministracionCatalogoController(
         var resultado = await catalogo.ActualizarCategoriaAsync(
             id, new DatosCategoriaAdmin(request.Nombre, request.Descripcion,
                 request.Activa ?? true), cancellationToken);
-        return Resultado(resultado);
+        return ResultadoAdmin(resultado);
     }
 
     [HttpGet("marcas")]
@@ -104,7 +111,7 @@ public sealed class AdministracionCatalogoController(
         var resultado = await catalogo.CrearMarcaAsync(
             new DatosMarcaAdmin(request.Nombre, request.Activa ?? true),
             cancellationToken);
-        return Resultado(resultado, creado: true);
+        return ResultadoAdmin(resultado, creado: true);
     }
 
     [HttpPut("marcas/{id:int}")]
@@ -126,7 +133,7 @@ public sealed class AdministracionCatalogoController(
         var resultado = await catalogo.ActualizarMarcaAsync(
             id, new DatosMarcaAdmin(request.Nombre, request.Activa ?? true),
             cancellationToken);
-        return Resultado(resultado);
+        return ResultadoAdmin(resultado);
     }
 
     [HttpGet("categorias/{id:int}/marcas")]
@@ -151,7 +158,7 @@ public sealed class AdministracionCatalogoController(
 
         var resultado = await catalogo.VincularMarcaAsync(
             id, idMarca, request.Activa, cancellationToken);
-        return Resultado(resultado);
+        return ResultadoAdmin(resultado);
     }
 
     [HttpGet("categorias/{id:int}/requisitos")]
@@ -162,8 +169,8 @@ public sealed class AdministracionCatalogoController(
     {
         var requisitos = await catalogo.ObtenerRequisitosAsync(id, cancellationToken);
         return requisitos is null
-            ? Problema(StatusCodes.Status404NotFound, "Categoría no encontrada",
-                "La categoría indicada no existe.")
+            ? Problema(StatusCodes.Status404NotFound, "CategorÃ­a no encontrada",
+                "La categorÃ­a indicada no existe.")
             : Ok(requisitos);
     }
 
@@ -193,7 +200,7 @@ public sealed class AdministracionCatalogoController(
                     e.Obligatorio, e.CantidadMinima, e.CantidadMaxima,
                     e.Orden)).ToList() ?? []),
             cancellationToken);
-        return Resultado(resultado);
+        return ResultadoAdmin(resultado);
     }
 
     [HttpGet("categorias/{id:int}/criterios")]
@@ -220,7 +227,7 @@ public sealed class AdministracionCatalogoController(
 
         var resultado = await catalogo.CrearCriterioAsync(
             id, Mapear(request), cancellationToken);
-        return Resultado(resultado, creado: true);
+        return ResultadoAdmin(resultado, creado: true);
     }
 
     [HttpPut("criterios/{idCriterio:int}")]
@@ -241,63 +248,12 @@ public sealed class AdministracionCatalogoController(
 
         var resultado = await catalogo.ActualizarCriterioAsync(
             idCriterio, Mapear(request), cancellationToken);
-        return Resultado(resultado);
+        return ResultadoAdmin(resultado);
     }
 
     private static DatosCriterioAdmin Mapear(CriterioRequest request) =>
         new(request.Nombre, request.Descripcion, request.TipoDato,
             request.Obligatorio, request.Orden, request.Activo);
-
-    private ActionResult Resultado<T>(ResultadoAdmin<T> resultado, bool creado = false) =>
-        resultado.Estado switch
-        {
-            EstadoOperacionAdmin.Exito => creado
-                ? StatusCode(StatusCodes.Status201Created, resultado.Valor)
-                : Ok(resultado.Valor),
-            EstadoOperacionAdmin.NoEncontrado => Problema(
-                StatusCodes.Status404NotFound, "No encontrado",
-                resultado.Detalle ?? "El recurso indicado no existe."),
-            EstadoOperacionAdmin.DatosInvalidos => Validacion(
-                resultado.Campo ?? "solicitud",
-                resultado.Detalle ?? "Los datos no son válidos."),
-            EstadoOperacionAdmin.Conflicto => Problema(
-                StatusCodes.Status409Conflict, "Conflicto",
-                resultado.Detalle ?? "El recurso entra en conflicto con otro existente."),
-            EstadoOperacionAdmin.NoPermitido => Problema(
-                StatusCodes.Status403Forbidden, "No permitido",
-                resultado.Detalle ?? "La operación no está permitida."),
-            EstadoOperacionAdmin.EstadoNoConfigurado => Problema(
-                StatusCodes.Status503ServiceUnavailable, "Servicio no disponible",
-                resultado.Detalle ?? "Falta configuración del sistema."),
-            _ => Problema(StatusCodes.Status500InternalServerError, "Error interno",
-                "No fue posible completar la operación.")
-        };
-
-    private bool TryObtenerUsuario(out int idUsuario) =>
-        int.TryParse(
-            User.FindFirstValue(ClaimTypes.NameIdentifier),
-            NumberStyles.Integer,
-            CultureInfo.InvariantCulture,
-            out idUsuario) && idUsuario > 0;
-
-    private static ObjectResult NoAutenticado() =>
-        Problema(StatusCodes.Status401Unauthorized, "No autenticado",
-            "Inicia sesión para continuar.");
-
-    private ActionResult Validacion(string campo, string mensaje) =>
-        ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-        {
-            [campo] = [mensaje]
-        })
-        {
-            Status = StatusCodes.Status400BadRequest,
-            Title = "Solicitud inválida"
-        });
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
-        };
 }
+
+

@@ -14,7 +14,7 @@ public sealed record AsignarEspecialistaRequest(int? IdEspecialista);
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class AdministracionSolicitudesController(
     AsignarEspecialista asignarEspecialista,
-    IAsignacionStore asignaciones) : ControllerBase
+    IAsignacionStore asignaciones) : ApiControllerBase
 {
     [HttpGet]
     [ProducesResponseType<ListadoSolicitudesAsignacion>(StatusCodes.Status200OK)]
@@ -106,16 +106,6 @@ public sealed class AdministracionSolicitudesController(
         };
     }
 
-    private ActionResult Validacion(string campo, string mensaje) =>
-        ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-        {
-            [campo] = [mensaje]
-        })
-        {
-            Status = StatusCodes.Status400BadRequest,
-            Title = "Solicitud inválida"
-        });
-
     private static ObjectResult ConflictoAsignacion(AsignacionActual? asignacion)
     {
         var problema = new ProblemDetails
@@ -132,11 +122,4 @@ public sealed class AdministracionSolicitudesController(
             ContentTypes = { "application/problem+json" }
         };
     }
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
-        };
 }

@@ -1,3 +1,4 @@
+﻿using System.Text.Json.Serialization;
 using GradeX.Api.Security;
 using GradeX.Application.Administracion;
 using Microsoft.AspNetCore.Authorization;
@@ -6,9 +7,12 @@ using Microsoft.AspNetCore.RateLimiting;
 
 namespace GradeX.Api.Controllers;
 
-public sealed record EspecialidadRequest(int IdCategoria, int? IdMarca, string? Nivel);
+public sealed record EspecialidadRequest(
+    [property: JsonRequired] int IdCategoria,
+    int? IdMarca,
+    string? Nivel);
 public sealed record EspecialistaRequest(
-    int IdUsuario,
+    [property: JsonRequired] int IdUsuario,
     string? Estado,
     short? AniosExperiencia,
     string? Biografia,
@@ -19,7 +23,7 @@ public sealed record EspecialistaRequest(
 [Route("api/administracion/especialistas")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class AdministracionEspecialistasController(
-    IEspecialistaAdminStore especialistas) : ControllerBase
+    IEspecialistaAdminStore especialistas) : ApiControllerBase
 {
     [HttpGet]
     [ProducesResponseType<IReadOnlyList<EspecialistaAdmin>>(StatusCodes.Status200OK)]
@@ -49,7 +53,7 @@ public sealed class AdministracionEspecialistasController(
 
         var resultado = await especialistas.CrearAsync(
             Mapear(request), cancellationToken);
-        return Resultado(resultado, creado: true);
+        return ResultadoAdmin(resultado, creado: true);
     }
 
     [HttpPut("{id:int}")]
@@ -68,7 +72,7 @@ public sealed class AdministracionEspecialistasController(
 
         var resultado = await especialistas.ActualizarAsync(
             id, Mapear(request), cancellationToken);
-        return Resultado(resultado);
+        return ResultadoAdmin(resultado);
     }
 
     private static DatosEspecialistaAdmin Mapear(EspecialistaRequest request) =>
@@ -80,45 +84,7 @@ public sealed class AdministracionEspecialistasController(
             request.Especialidades?.Select(e => new DatosEspecialidadAdmin(
                 e.IdCategoria, e.IdMarca, e.Nivel)).ToList() ?? []);
 
-    private ActionResult Resultado<T>(ResultadoAdmin<T> resultado, bool creado = false) =>
-        resultado.Estado switch
-        {
-            EstadoOperacionAdmin.Exito => creado
-                ? StatusCode(StatusCodes.Status201Created, resultado.Valor)
-                : Ok(resultado.Valor),
-            EstadoOperacionAdmin.NoEncontrado => Problema(
-                StatusCodes.Status404NotFound, "No encontrado",
-                resultado.Detalle ?? "El especialista o usuario indicado no existe."),
-            EstadoOperacionAdmin.DatosInvalidos => Validacion(
-                resultado.Campo ?? "solicitud",
-                resultado.Detalle ?? "Los datos no son válidos."),
-            EstadoOperacionAdmin.Conflicto => Problema(
-                StatusCodes.Status409Conflict, "Conflicto",
-                resultado.Detalle ?? "El usuario ya tiene un perfil de especialista."),
-            EstadoOperacionAdmin.NoPermitido => Problema(
-                StatusCodes.Status403Forbidden, "No permitido",
-                resultado.Detalle ?? "La operación no está permitida."),
-            EstadoOperacionAdmin.EstadoNoConfigurado => Problema(
-                StatusCodes.Status503ServiceUnavailable, "Servicio no disponible",
-                resultado.Detalle ?? "Falta configuración del sistema."),
-            _ => Problema(StatusCodes.Status500InternalServerError, "Error interno",
-                "No fue posible completar la operación.")
-        };
-
-    private ActionResult Validacion(string campo, string mensaje) =>
-        ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-        {
-            [campo] = [mensaje]
-        })
-        {
-            Status = StatusCodes.Status400BadRequest,
-            Title = "Solicitud inválida"
-        });
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
-        };
 }
+
+
+

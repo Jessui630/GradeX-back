@@ -1,5 +1,4 @@
-using System.Globalization;
-using System.Security.Claims;
+using System.Text.Json.Serialization;
 using GradeX.Api.Security;
 using GradeX.Application.Evaluaciones;
 using GradeX.Application.Solicitudes;
@@ -10,7 +9,7 @@ using Microsoft.AspNetCore.RateLimiting;
 namespace GradeX.Api.Controllers;
 
 public sealed record ResultadoCriterioRequest(
-    int IdCriterio,
+    [property: JsonRequired] int IdCriterio,
     string? ValorTexto,
     decimal? ValorNumerico,
     bool? ValorBooleano,
@@ -40,7 +39,7 @@ public sealed record SolicitarEvidenciaRequest(
 public sealed class EspecialistaAsignacionesController(
     IEvaluacionStore evaluaciones,
     GradeX.Application.Certificados.ICertificadoStore certificados,
-    IEvidenciaStorage almacenamiento) : ControllerBase
+    IEvidenciaStorage almacenamiento) : ApiControllerBase
 {
     [HttpGet]
     [ProducesResponseType<ListadoAsignacionesEspecialista>(StatusCodes.Status200OK)]
@@ -271,35 +270,7 @@ public sealed class EspecialistaAsignacionesController(
             r.IdCriterio, r.ValorTexto, r.ValorNumerico,
             r.ValorBooleano, r.Observacion)).ToList() ?? [];
 
-    private bool TryObtenerUsuario(out int idUsuario) =>
-        int.TryParse(
-            User.FindFirstValue(ClaimTypes.NameIdentifier),
-            NumberStyles.Integer,
-            CultureInfo.InvariantCulture,
-            out idUsuario) && idUsuario > 0;
-
-    private static ObjectResult NoAutenticado() =>
-        Problema(StatusCodes.Status401Unauthorized, "No autenticado",
-            "Inicia sesión para continuar.");
-
     private static ObjectResult NoEncontrada() =>
         Problema(StatusCodes.Status404NotFound, "Asignación no encontrada",
             "La solicitud no existe o no está asignada a tu perfil.");
-
-    private ActionResult Validacion(string campo, string mensaje) =>
-        ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-        {
-            [campo] = [mensaje]
-        })
-        {
-            Status = StatusCodes.Status400BadRequest,
-            Title = "Solicitud inválida"
-        });
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
-        };
 }

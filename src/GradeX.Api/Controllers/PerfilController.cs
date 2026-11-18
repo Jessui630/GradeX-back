@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Security.Claims;
 using GradeX.Api.Security;
 using GradeX.Application.Perfil;
 using Microsoft.AspNetCore.Authorization;
@@ -23,7 +21,7 @@ public sealed record CambiarContrasenaRequest(
 public sealed class PerfilController(
     IPerfilStore perfil,
     ActualizarPerfil actualizarPerfil,
-    CambiarContrasena cambiarContrasena) : ControllerBase
+    CambiarContrasena cambiarContrasena) : ApiControllerBase
 {
     [HttpGet]
     [ProducesResponseType<PerfilUsuario>(StatusCodes.Status200OK)]
@@ -107,33 +105,5 @@ public sealed class PerfilController(
                 resultado.Detalle ?? "No fue posible completar la operación."),
             _ => Problema(StatusCodes.Status500InternalServerError, "Error interno",
                 "No fue posible completar la operación.")
-        };
-
-    private bool TryObtenerUsuario(out int idUsuario) =>
-        int.TryParse(
-            User.FindFirstValue(ClaimTypes.NameIdentifier),
-            NumberStyles.Integer,
-            CultureInfo.InvariantCulture,
-            out idUsuario) && idUsuario > 0;
-
-    private static ObjectResult NoAutenticado() =>
-        Problema(StatusCodes.Status401Unauthorized, "No autenticado",
-            "Inicia sesión para continuar.");
-
-    private ActionResult Validacion(string campo, string mensaje) =>
-        ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]>
-        {
-            [campo] = [mensaje]
-        })
-        {
-            Status = StatusCodes.Status400BadRequest,
-            Title = "Solicitud inválida"
-        });
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
         };
 }

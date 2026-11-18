@@ -75,6 +75,7 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
             .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
                 .ThenInclude(c => c!.IdEstadoCertificadoNavigation)
             .Include(s => s.AsignacionEspecialistum)
+            .AsSplitQuery()
             .Where(s => s.IdSolicitud == idSolicitud &&
                 s.AsignacionEspecialistum != null &&
                 s.AsignacionEspecialistum.IdEspecialista == especialista.IdEspecialista &&

@@ -1,5 +1,3 @@
-using System.Globalization;
-using System.Security.Claims;
 using GradeX.Application.Certificados;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,7 +7,7 @@ namespace GradeX.Api.Controllers;
 [ApiController]
 [Route("api/certificados")]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class CertificadosController(ICertificadoStore certificados) : ControllerBase
+public sealed class CertificadosController(ICertificadoStore certificados) : ApiControllerBase
 {
     [HttpGet("solicitud/{idSolicitud:int}")]
     [Authorize]
@@ -57,22 +55,4 @@ public sealed class CertificadosController(ICertificadoStore certificados) : Con
                 "El número no corresponde a un certificado emitido.")
             : Ok(certificado);
     }
-
-    private bool TryObtenerUsuario(out int idUsuario) =>
-        int.TryParse(
-            User.FindFirstValue(ClaimTypes.NameIdentifier),
-            NumberStyles.Integer,
-            CultureInfo.InvariantCulture,
-            out idUsuario) && idUsuario > 0;
-
-    private static ObjectResult NoAutenticado() =>
-        Problema(StatusCodes.Status401Unauthorized, "No autenticado",
-            "Inicia sesión para continuar.");
-
-    private static ObjectResult Problema(int estado, string titulo, string detalle) =>
-        new(new ProblemDetails { Status = estado, Title = titulo, Detail = detalle })
-        {
-            StatusCode = estado,
-            ContentTypes = { "application/problem+json" }
-        };
 }
