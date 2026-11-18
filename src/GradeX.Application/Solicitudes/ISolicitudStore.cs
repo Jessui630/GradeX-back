@@ -116,6 +116,15 @@ public sealed record EspecialistaAsignado(int IdEspecialista, string Nombre);
 
 public sealed record EvaluacionResumen(string? Dictamen, DateTime? FechaFin);
 
+public sealed record ResultadoCriterioDetalle(
+    int IdCriterio,
+    string Nombre,
+    string TipoDato,
+    string? ValorTexto,
+    decimal? ValorNumerico,
+    bool? ValorBooleano,
+    string? Observacion);
+
 public sealed record SolicitudDetalle(
     int IdSolicitud,
     string Folio,
@@ -141,7 +150,9 @@ public sealed record SolicitudDetalle(
     IReadOnlyList<SeguimientoEvento> Seguimiento,
     EspecialistaAsignado? Especialista,
     EvaluacionResumen? Evaluacion,
-    bool CertificadoDisponible);
+    bool CertificadoDisponible,
+    string? EvidenciaAdicionalSolicitada = null,
+    IReadOnlyList<ResultadoCriterioDetalle>? ResultadosEvaluacion = null);
 
 public sealed record ArchivoEvidencia(
     string ClaveAlmacenamiento,

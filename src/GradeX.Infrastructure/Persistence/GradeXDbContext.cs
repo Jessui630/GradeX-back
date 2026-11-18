@@ -559,6 +559,8 @@ public partial class GradeXDbContext : DbContext
                 .HasDefaultValueSql("(sysdatetime())", "DF_Usuario_FechaCreacion");
             entity.Property(e => e.NombreCompleto).HasMaxLength(150);
             entity.Property(e => e.PasswordHash).HasMaxLength(255);
+            entity.Property(e => e.RecibirNotificaciones)
+                .HasDefaultValue(true, "DF_Usuario_RecibirNotificaciones");
         });
 
         modelBuilder.Entity<UsuarioRol>(entity =>

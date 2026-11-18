@@ -24,7 +24,8 @@ public sealed class RegistroCuentaStore(GradeXDbContext db, string nombreRol = "
             NombreCompleto = nombreCompleto,
             Correo = correo,
             PasswordHash = passwordHash,
-            Activo = true
+            Activo = true,
+            RecibirNotificaciones = true
         };
         usuario.UsuarioRols.Add(new UsuarioRol { IdRol = rol.IdRol });
         db.Usuarios.Add(usuario);
