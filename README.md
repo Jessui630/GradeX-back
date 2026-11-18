@@ -129,6 +129,18 @@ Migraciones incluidas:
 4. `20261108214534_AddSprint1Solicitudes`: sesiones persistentes, idempotencia de solicitudes, requisitos por categoría, metadatos de evidencia y datos iniciales de catálogo/estados/tipos de evidencia.
 5. `20261111190603_SeedRolesOperativos`: siembra idempotente de los roles base `Solicitante`, `Especialista` y `Administrador`. Falla de forma explícita si `Solicitante` existe inactivo, para exigir revisión manual.
 6. `20261118191412_RepararCatalogoSprint1`: reparación idempotente del catálogo oficial. Restaura estados, tipos de evidencia, categorías y requisitos ausentes aunque la migración histórica ya esté registrada, y corrige `VISTA_GENERAL` a mínimo 1/máximo 1. No elimina catálogo ni sobrescribe requisitos personalizados.
+7. `20261118195907_Sprint2EstadosNotificaciones`: estados `ASIGNADA`, `EN_EVALUACION`, `FALTA_EVIDENCIA` y `FINALIZADA`; estado de certificado `EMITIDO`; tipos de notificación y preferencia `Usuario.RecibirNotificaciones` con valor predeterminado 1.
+
+### Migración pendiente Sprint 2-3
+
+El script versionado `docs/database/Sprint2-3-Pendientes.sql` aplica únicamente la migración `20261118195907_Sprint2EstadosNotificaciones` de forma idempotente. No elimina datos y añade la preferencia con `DEFAULT 1`. Debe ejecutarse **después** de las migraciones del Sprint 1 y solo con autorización explícita:
+
+```bash
+sqlcmd -S sql-gradex-students.database.windows.net -d GradeX_DevCloud -G -I \
+  -i docs/database/Sprint2-3-Pendientes.sql
+```
+
+El diagnóstico previo de solo lectura es `docs/database/Diagnostico-Sprint2-3.sql`; revisa historial, estados, tipos de notificación, especialistas, asignaciones, evaluaciones y certificados. El script se probó en una base aislada desde `20261118191412_RepararCatalogoSprint1`: crea los seis estados, `EMITIDO`, los cuatro tipos de aviso y la columna de preferencia, y una segunda ejecución no duplica filas. No se aplicó en Azure.
 
 Los scripts de referencia del esquema histórico están en `docs/database/InitialSchema.sql` y `docs/database/RestoreCheckConstraints.sql`.
 
