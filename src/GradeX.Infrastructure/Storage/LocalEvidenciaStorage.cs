@@ -11,8 +11,9 @@ public sealed class LocalEvidenciaStorage : IEvidenciaStorage
         if (string.IsNullOrWhiteSpace(root))
             throw new ArgumentException("La ruta de evidencias es obligatoria.", nameof(root));
         this.root = Path.GetFullPath(root);
-        Directory.CreateDirectory(this.root);
     }
+
+    public string Root => root;
 
     public async Task<string> GuardarAsync(
         Stream contenido, string extension, CancellationToken cancellationToken)
@@ -26,6 +27,7 @@ public sealed class LocalEvidenciaStorage : IEvidenciaStorage
             ahora.ToString("MM", System.Globalization.CultureInfo.InvariantCulture),
             $"{Guid.NewGuid():N}{extension}");
         var destino = Resolver(relativa);
+        Directory.CreateDirectory(root);
         Directory.CreateDirectory(Path.GetDirectoryName(destino)!);
 
         await using var archivo = new FileStream(
@@ -37,6 +39,9 @@ public sealed class LocalEvidenciaStorage : IEvidenciaStorage
 
     public Task<Stream?> AbrirAsync(string clave, CancellationToken cancellationToken)
     {
+        if (!Directory.Exists(root))
+            return Task.FromResult<Stream?>(null);
+
         var destino = Resolver(clave);
         if (!File.Exists(destino))
             return Task.FromResult<Stream?>(null);
@@ -48,6 +53,9 @@ public sealed class LocalEvidenciaStorage : IEvidenciaStorage
 
     public Task EliminarAsync(string clave, CancellationToken cancellationToken)
     {
+        if (!Directory.Exists(root))
+            return Task.CompletedTask;
+
         var destino = Resolver(clave);
         if (File.Exists(destino))
             File.Delete(destino);

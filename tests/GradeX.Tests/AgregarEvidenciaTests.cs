@@ -111,6 +111,43 @@ public sealed class AgregarEvidenciaTests
     }
 
     [Fact]
+    public async Task RutaNoEscribibleDevuelveAlmacenamientoNoDisponible()
+    {
+        var archivo = Path.GetTempFileName();
+        try
+        {
+            var resultado = await new AgregarEvidencia(
+                new Store(), new LocalEvidenciaStorage(archivo))
+                .EjecutarAsync(1, 7, Datos(Png, "foto.png"), CancellationToken.None);
+
+            Assert.Equal(EstadoAgregarEvidencia.AlmacenamientoNoDisponible, resultado.Estado);
+        }
+        finally
+        {
+            File.Delete(archivo);
+        }
+    }
+
+    [Fact]
+    public async Task ConstructorDifiereLaCreacionDelDirectorio()
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"gradex-pendiente-{Guid.NewGuid():N}");
+        try
+        {
+            var storage = new LocalEvidenciaStorage(root);
+
+            Assert.False(Directory.Exists(root));
+            Assert.Null(await storage.AbrirAsync(
+                "2026/11/foto.png", CancellationToken.None));
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+                Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task RechazaRutasFueraDelAlmacenamiento()
     {
         var root = CrearRuta();
