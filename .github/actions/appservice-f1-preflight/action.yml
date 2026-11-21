@@ -80,6 +80,11 @@ runs:
           exit 1
         }
 
+        plan_id_helpers="${GITHUB_WORKSPACE}/scripts/appservice-plan-id.sh"
+        [ -f "$plan_id_helpers" ] || fail "No se encontró el helper de plan del preflight: $plan_id_helpers"
+        # shellcheck source=../../../scripts/appservice-plan-id.sh
+        source "$plan_id_helpers"
+
         normalize() {
           printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]'
         }
@@ -176,7 +181,9 @@ runs:
         app_state="$(jq -r '.state // empty' <<<"$app_json")"
         app_kind="$(normalize "$(jq -r '.kind // empty' <<<"$app_json")")"
         app_location="$(normalize "$(jq -r '.location // empty' <<<"$app_json")")"
-        app_server_farm="$(jq -r '.serverFarmId // empty' <<<"$app_json")"
+        # az webapp show expone appServicePlanId en versiones recientes y
+        # serverFarmId en versiones anteriores. Se resuelve con compatibilidad.
+        app_plan_id="$(extract_app_plan_id "$app_json")"
         app_https_only="$(normalize "$(jq -r '.httpsOnly // false' <<<"$app_json")")"
         app_reserved="$(normalize "$(jq -r '.reserved // false' <<<"$app_json")")"
         app_linux_fx="$(jq -r '.siteConfig.linuxFxVersion // empty' <<<"$app_json")"
@@ -209,8 +216,14 @@ runs:
         if [ "$app_location" != "$(normalize "$EXPECTED_LOCATION")" ]; then
           fail "El App Service '$WEBAPP_NAME' no está en la región esperada (location=$app_location)."
         fi
-        if [ "$(normalize "${app_server_farm##*/}")" != "$(normalize "$PLAN_NAME")" ]; then
-          fail "El App Service '$WEBAPP_NAME' no está asociado al plan '$PLAN_NAME'."
+        if ! plan_ids_consistent "$app_json"; then
+          fail "El App Service '$WEBAPP_NAME' devuelve appServicePlanId y serverFarmId inconsistentes."
+        fi
+        if [ -z "$app_plan_id" ]; then
+          fail "El App Service '$WEBAPP_NAME' no expone appServicePlanId ni serverFarmId; no se puede verificar el plan."
+        fi
+        if ! plan_id_matches "$app_plan_id" "$expected_plan_id"; then
+          fail "El App Service '$WEBAPP_NAME' no está asociado al plan '$PLAN_NAME' (plan devuelto='$app_plan_id')."
         fi
         if [ "$app_reserved" != "true" ]; then
           fail "El App Service '$WEBAPP_NAME' no es Linux (reserved=$app_reserved)."
