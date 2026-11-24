@@ -29,6 +29,9 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           global-json-file: global.json
+      - name: Test App Service F1 preflight plan ID compatibility
+        shell: bash
+        run: bash scripts/test-appservice-plan-id.sh
       - name: Analyze, build and test (no database)
         shell: pwsh
         run: ./scripts/quality.ps1 -OutputDirectory '${{ runner.temp }}/gradex-quality' -FailOnWarnings
