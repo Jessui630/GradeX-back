@@ -50,12 +50,26 @@ public sealed class PerfilStore(GradeXDbContext db) : IPerfilStore
     public async Task<bool> ActualizarContrasenaAsync(
         int idUsuario, string passwordHash, CancellationToken cancellationToken)
     {
+        // El cambio de contraseña y la revocación de todas las sesiones deben
+        // ser atómicos: si falla la revocación, no se deja una contraseña nueva
+        // con sesiones antiguas todavía válidas.
+        await using var transaccion = await db.Database.BeginTransactionAsync(cancellationToken);
         var actualizadas = await db.Usuarios
             .Where(u => u.IdUsuario == idUsuario && u.Activo)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(u => u.PasswordHash, passwordHash)
                 .SetProperty(u => u.FechaActualizacion, DateTime.UtcNow),
                 cancellationToken);
+        if (actualizadas > 0)
+        {
+            var ahora = DateTime.UtcNow;
+            await db.SesionUsuarios
+                .Where(s => s.IdUsuario == idUsuario && s.FechaRevocacion == null)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(s => s.FechaRevocacion, ahora),
+                    cancellationToken);
+        }
+        await transaccion.CommitAsync(cancellationToken);
         return actualizadas > 0;
     }
 }

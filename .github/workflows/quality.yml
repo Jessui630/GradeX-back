@@ -35,6 +35,15 @@ jobs:
       - name: Analyze, build and test (no database)
         shell: pwsh
         run: ./scripts/quality.ps1 -OutputDirectory '${{ runner.temp }}/gradex-quality' -FailOnWarnings
+      - name: Show real coverage summary
+        if: always()
+        shell: pwsh
+        run: |
+          $summary = Join-Path '${{ runner.temp }}' 'gradex-quality/summary.json'
+          if (Test-Path $summary) {
+            $quality = Get-Content $summary -Raw | ConvertFrom-Json
+            $quality.coverage | ConvertTo-Json -Depth 5
+          }
       - name: Upload logs, SARIF and TRX even on failure
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

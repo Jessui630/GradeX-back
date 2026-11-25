@@ -204,7 +204,7 @@ public sealed class EspecialistaAsignacionesController(
                 NoEncontrada(),
             GradeX.Application.Certificados.EstadoOperacionCertificado.NoAutorizado =>
                 Problema(StatusCodes.Status403Forbidden, "Acceso denegado",
-                    "No tienes una asignación activa sobre esta solicitud."),
+                    "No tienes autorización para emitir el certificado de esta evaluación."),
             GradeX.Application.Certificados.EstadoOperacionCertificado.YaExiste =>
                 Problema(StatusCodes.Status409Conflict, "Certificado existente",
                     resultado.Detalle ?? "La evaluación ya tiene un certificado emitido."),

@@ -205,6 +205,29 @@ public sealed class Sprint2HttpSqlTests
                     await respuesta.Content.ReadAsStringAsync());
             }
 
+            await using (var db = await SqlIntegration.AbrirContextoAsync())
+            {
+                var idOtroEspecialista = idsEspecialistas.Single(id => id != idEspecialista);
+                await db.Evaluacions
+                    .Where(e => e.IdSolicitud == idSolicitud)
+                    .ExecuteUpdateAsync(update => update
+                        .SetProperty(e => e.IdEspecialista, idOtroEspecialista));
+            }
+            using (var intentoAjeno = new HttpRequestMessage(
+                HttpMethod.Post, $"/api/especialista/asignaciones/{idSolicitud}/certificado"))
+            {
+                intentoAjeno.Headers.Add("X-CSRF-Token", await ObtenerCsrfAsync(especialista));
+                Assert.Equal(HttpStatusCode.Forbidden,
+                    (await especialista.SendAsync(intentoAjeno)).StatusCode);
+            }
+            await using (var db = await SqlIntegration.AbrirContextoAsync())
+            {
+                await db.Evaluacions
+                    .Where(e => e.IdSolicitud == idSolicitud)
+                    .ExecuteUpdateAsync(update => update
+                        .SetProperty(e => e.IdEspecialista, idEspecialista));
+            }
+
             using var emitir = new HttpRequestMessage(
                 HttpMethod.Post, $"/api/especialista/asignaciones/{idSolicitud}/certificado");
             emitir.Headers.Add("X-CSRF-Token", await ObtenerCsrfAsync(especialista));

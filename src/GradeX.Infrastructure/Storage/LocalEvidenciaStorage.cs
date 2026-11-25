@@ -66,10 +66,7 @@ public sealed class LocalEvidenciaStorage : IEvidenciaStorage
     {
         var normalizada = clave.Replace('/', Path.DirectorySeparatorChar);
         var destino = Path.GetFullPath(Path.Combine(root, normalizada));
-        var prefijo = root.EndsWith(Path.DirectorySeparatorChar)
-            ? root
-            : root + Path.DirectorySeparatorChar;
-        if (!destino.StartsWith(prefijo, StringComparison.OrdinalIgnoreCase))
+        if (!RutaAlmacenamiento.EstaDentro(root, destino))
             throw new InvalidOperationException("Ruta de evidencia fuera del almacenamiento permitido.");
         return destino;
     }
