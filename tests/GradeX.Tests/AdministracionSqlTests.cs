@@ -4,6 +4,7 @@ using GradeX.Application.Perfil;
 using GradeX.Application.Workflow;
 using GradeX.Infrastructure.Persistence;
 using GradeX.Infrastructure.Persistence.Commands;
+using GradeX.Infrastructure.Persistence.Queries;
 using GradeX.Infrastructure.Persistence.Sessions;
 using Microsoft.EntityFrameworkCore;
 
@@ -186,6 +187,30 @@ public sealed class AdministracionSqlTests
             Assert.Equal(EstadoPerfil.Exito, resultado.Estado);
             Assert.Equal("Nombre Actualizado", resultado.Perfil!.NombreCompleto);
             Assert.False(resultado.Perfil.RecibirNotificaciones);
+
+            var invalido = await actualizar.EjecutarAsync(
+                idUsuario, new DatosPerfil(" ", true), CancellationToken.None);
+            Assert.Equal(EstadoPerfil.DatosInvalidos, invalido.Estado);
+            Assert.Equal("nombreCompleto", invalido.Campo);
+            invalido = await actualizar.EjecutarAsync(
+                idUsuario, new DatosPerfil(new string('x', 151), true),
+                CancellationToken.None);
+            Assert.Equal(EstadoPerfil.DatosInvalidos, invalido.Estado);
+            Assert.Equal(EstadoPerfil.NoEncontrado,
+                (await actualizar.EjecutarAsync(
+                    999999, new DatosPerfil("Nombre", true),
+                    CancellationToken.None)).Estado);
+
+            var notificaciones = new NotificacionStore(db);
+            var listadoNotificaciones = await notificaciones.ListarAsync(
+                idUsuario, 1, 20, false, CancellationToken.None);
+            Assert.Empty(listadoNotificaciones.Elementos);
+            Assert.Equal(0, await notificaciones.ContarNoLeidasAsync(
+                idUsuario, CancellationToken.None));
+            Assert.False(await notificaciones.MarcarLeidaAsync(
+                999999, idUsuario, CancellationToken.None));
+            Assert.Equal(0, await notificaciones.MarcarTodasLeidasAsync(
+                idUsuario, CancellationToken.None));
 
             var sesionStore = new SesionStore(db);
             var sesion = await sesionStore.CrearAsync(
