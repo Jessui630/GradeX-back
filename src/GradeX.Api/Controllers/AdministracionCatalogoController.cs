@@ -255,5 +255,3 @@ public sealed class AdministracionCatalogoController(
         new(request.Nombre, request.Descripcion, request.TipoDato,
             request.Obligatorio, request.Orden, request.Activo);
 }
-
-

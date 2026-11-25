@@ -85,6 +85,3 @@ public sealed class AdministracionEspecialistasController(
                 e.IdCategoria, e.IdMarca, e.Nivel)).ToList() ?? []);
 
 }
-
-
-
