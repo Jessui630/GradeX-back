@@ -1,0 +1,78 @@
+name: SQL integration (Windows LocalDB)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - release
+  pull_request:
+    branches:
+      - main
+      - develop
+      - release
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sql-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sql:
+    name: SQL integration tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Initialize LocalDB integration database
+        shell: pwsh
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1
+
+      - name: Run SQL integration tests
+        shell: pwsh
+        env:
+          GRADEX_INTEGRATION_TEST_CONNECTION: 'Server=(localdb)\MSSQLLocalDB;Database=GradeX_IntegrationTests;Trusted_Connection=True;TrustServerCertificate=True'
+        run: |
+          dotnet test GradeX.slnx --configuration Release --nologo `
+            --logger "trx;LogFileName=sql.trx" `
+            --results-directory TestResults
+
+      - name: Require real SQL execution
+        shell: pwsh
+        run: |
+          $trx = Get-ChildItem TestResults -Recurse -Filter sql.trx |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $trx) { throw 'No se generó el archivo TRX.' }
+          [xml]$doc = Get-Content -LiteralPath $trx.FullName -Raw
+          $results = @($doc.GetElementsByTagName('UnitTestResult'))
+          $passed = @($results | Where-Object { $_.outcome -eq 'Passed' }).Count
+          $skipped = @($results | Where-Object { $_.outcome -eq 'NotExecuted' })
+          $unexpected = @($skipped | Where-Object {
+            $_.testName -notmatch 'PwnedPasswordsLiveTests'
+          })
+          if ($unexpected.Count -gt 0) {
+            $names = $unexpected | ForEach-Object { $_.testName }
+            throw "Pruebas omitidas inesperadamente: $($names -join ', ')"
+          }
+          if ($passed -lt 126) {
+            throw "Solo $passed pruebas correctas; se esperaban al menos 126 con SQL."
+          }
+          Write-Host "SQL real: $passed correctas, $($skipped.Count) omitida(s) externas."
+
+      - name: Drop LocalDB integration database
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -Drop
