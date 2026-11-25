@@ -46,6 +46,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Verify SonarScanner Git Bash arguments
+        shell: pwsh
+        run: ./scripts/Test-SonarScannerArguments.ps1
+
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
@@ -77,12 +81,15 @@ jobs:
         env:
           SONAR_TOKEN: ${{ steps.sonar-auth.outputs.sonar-token }}
         run: |
+          # Git Bash/MSYS convierte argumentos que empiezan por "/" en rutas.
+          # SonarScanner 12.1 acepta "-k:", "-o:" y "-d:"; usar guiones evita
+          # que MSYS altere los parámetros.
           dotnet sonarscanner begin \
-            /k:"Jessui630_GradeX-back" \
-            /o:"jessui630" \
-            /d:sonar.host.url="https://sonarcloud.io" \
-            /d:sonar.cs.opencover.reportsPaths="coverage/sonar/**/coverage.opencover.xml" \
-            /d:sonar.token="$SONAR_TOKEN"
+            -k:"Jessui630_GradeX-back" \
+            -o:"jessui630" \
+            -d:sonar.host.url="https://sonarcloud.io" \
+            -d:sonar.cs.opencover.reportsPaths="coverage/sonar/**/coverage.opencover.xml" \
+            -d:sonar.token="$SONAR_TOKEN"
 
       - name: Build instrumented by SonarScanner
         run: dotnet build GradeX.slnx --configuration Release --nologo
@@ -100,7 +107,7 @@ jobs:
         shell: pwsh
         env:
           SONAR_TOKEN: ${{ steps.sonar-auth.outputs.sonar-token }}
-        run: dotnet sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+        run: dotnet sonarscanner end -d:sonar.token="$env:SONAR_TOKEN"
 
       - name: Upload coverage and test results
         if: always()

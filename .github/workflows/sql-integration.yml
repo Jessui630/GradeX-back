@@ -31,6 +31,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Verify SonarScanner Git Bash arguments
+        shell: pwsh
+        run: ./scripts/Test-SonarScannerArguments.ps1
+
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
