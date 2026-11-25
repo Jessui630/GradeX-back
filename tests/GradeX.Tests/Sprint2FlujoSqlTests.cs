@@ -1,3 +1,4 @@
+using GradeX.Application.Administracion;
 using GradeX.Application.Asignaciones;
 using GradeX.Application.Certificados;
 using GradeX.Application.Evaluaciones;
@@ -230,6 +231,14 @@ public sealed class Sprint2FlujoSqlTests
             Assert.NotNull(final.Evaluacion.FechaFin);
             Assert.Equal(FlujoGradeX.EstadosSolicitud.Finalizada,
                 await EstadoSolicitudAsync(db, solicitud.IdSolicitud));
+
+            var cambioTipo = await new CatalogoAdminStore(db).ActualizarCriterioAsync(
+                ids.IdCriterioNumerico,
+                new DatosCriterioAdmin("Condición", "Cambio de tipo posterior",
+                    FlujoGradeX.TiposCriterio.Texto, true, 1, true),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionAdmin.Conflicto, cambioTipo.Estado);
+            Assert.Equal("tipoDato", cambioTipo.Campo);
 
             // Un cambio posterior del catálogo no debe invalidar ni reescribir
             // el dictamen ya finalizado.

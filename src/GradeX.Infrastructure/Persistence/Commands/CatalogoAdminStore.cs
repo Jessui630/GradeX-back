@@ -428,6 +428,16 @@ public sealed class CatalogoAdminStore(GradeXDbContext db) : ICatalogoAdminStore
         if (criterio is null)
             return new ResultadoAdmin<CriterioAdmin>(EstadoOperacionAdmin.NoEncontrado);
 
+        var resultados = await db.ResultadoCriterios
+            .AsNoTracking()
+            .CountAsync(r => r.IdCriterio == idCriterio, cancellationToken);
+        if (resultados > 0 &&
+            !string.Equals(criterio.TipoDato, datos.TipoDato, StringComparison.Ordinal))
+            return new ResultadoAdmin<CriterioAdmin>(
+                EstadoOperacionAdmin.Conflicto, Campo: "tipoDato",
+                Detalle: "No se puede cambiar el tipo de un criterio que ya tiene resultados. " +
+                    "Crea un criterio nuevo para futuras evaluaciones.");
+
         criterio.Nombre = datos.Nombre!.Trim();
         criterio.Descripcion = Limpiar(datos.Descripcion);
         criterio.TipoDato = datos.TipoDato!;
@@ -446,8 +456,6 @@ public sealed class CatalogoAdminStore(GradeXDbContext db) : ICatalogoAdminStore
                 Detalle: "Ya existe un criterio con ese nombre en la categoría.");
         }
 
-        var resultados = await db.ResultadoCriterios
-            .CountAsync(r => r.IdCriterio == idCriterio, cancellationToken);
         return new ResultadoAdmin<CriterioAdmin>(
             EstadoOperacionAdmin.Exito,
             new CriterioAdmin(criterio.IdCriterio, criterio.Nombre,

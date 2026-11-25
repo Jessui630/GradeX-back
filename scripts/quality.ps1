@@ -107,6 +107,30 @@ try {
     $coverageReports = @(Get-ChildItem (Join-Path $output 'tests') `
         -Recurse -Filter 'coverage.cobertura.xml' -ErrorAction SilentlyContinue |
         ForEach-Object { $_.FullName })
+    $coverage = $null
+    if ($coverageReports.Count -gt 0) {
+        try {
+            [xml] $cobertura = Get-Content $coverageReports[0] -Raw
+            $coverageRoot = $cobertura.coverage
+            $coverage = [pscustomobject]@{
+                report = 'coverage.cobertura.xml'
+                lineRate = [double]::Parse($coverageRoot.'line-rate',
+                    [Globalization.CultureInfo]::InvariantCulture)
+                branchRate = [double]::Parse($coverageRoot.'branch-rate',
+                    [Globalization.CultureInfo]::InvariantCulture)
+                linesCovered = [int] $coverageRoot.'lines-covered'
+                linesValid = [int] $coverageRoot.'lines-valid'
+                branchesCovered = [int] $coverageRoot.'branches-covered'
+                branchesValid = [int] $coverageRoot.'branches-valid'
+            }
+        }
+        catch {
+            $coverage = [pscustomobject]@{
+                report = 'coverage.cobertura.xml'
+                error = $_.Exception.Message
+            }
+        }
+    }
     $buildLogWarnings = 0
     foreach ($logName in @('restore.log', 'analysis.log')) {
         $logPath = Join-Path $output $logName
@@ -129,6 +153,7 @@ try {
         notes = @($diagnostics | Where-Object { $_.level -eq 'note' -and -not $_.suppressed }).Count
         logWarningLinesIncludingBuildSummaryDuplicates = $buildLogWarnings
         coverageReports = @($coverageReports)
+        coverage = $coverage
         dependencyAudit = [pscustomobject]@{
             exitCode = $auditCode; vulnerable = $auditVulnerable; log = 'audit.log'
         }

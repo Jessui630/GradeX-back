@@ -61,6 +61,11 @@ public sealed class CertificadoStore(
                 EstadoOperacionCertificado.NoElegible,
                 Detalle: "La evaluación debe estar finalizada con dictamen.");
 
+        if (solicitud.Evaluacion.IdEspecialista != especialista.IdEspecialista)
+            return new ResultadoEmitirCertificado(
+                EstadoOperacionCertificado.NoAutorizado,
+                Detalle: "La evaluación fue finalizada por otro especialista.");
+
         if (solicitud.Evaluacion.Certificado is not null)
             return new ResultadoEmitirCertificado(
                 EstadoOperacionCertificado.YaExiste,

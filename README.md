@@ -445,6 +445,6 @@ Azure SQL Free, cuando la suscripción sea elegible, ofrece 100.000 vCore-segund
 
 El repositorio está vinculado a SonarQube Cloud (SonarCloud) mediante la integración de GitHub. El check `SonarCloud Code Analysis` y su Quality Gate se ejecutan sobre los PR; no se crea una instancia SonarQube Server ni se añaden servicios de pago.
 
-`scripts/quality.ps1` genera cobertura real con `coverlet.collector` en `coverage.cobertura.xml` dentro del directorio de resultados, y ejecuta `dotnet list package --vulnerable --include-transitive`. El CI publica ambos artefactos y falla si aparecen paquetes vulnerables o si no se genera cobertura. No se fija un porcentaje mínimo ni se declaran porcentajes manualmente.
+`scripts/quality.ps1` genera cobertura real con `coverlet.collector` en `coverage.cobertura.xml` dentro del directorio de resultados, y ejecuta `dotnet list package --vulnerable --include-transitive`. El CI publica ambos artefactos, imprime `coverage.lineRate`/`coverage.branchRate` desde `summary.json` y falla si aparecen paquetes vulnerables o si no se genera cobertura. No se fija un porcentaje mínimo ni se declaran porcentajes manualmente.
 
 El análisis automático de SonarCloud no importa cobertura. Para importarla hace falta configurar el secreto `SONAR_TOKEN` y un scanner con `sonar.cs.cobertura.reportsPaths` apuntando al XML. Ese scanner debe sustituir al análisis automático, no duplicarlo. Sin token no se declara cobertura importada.

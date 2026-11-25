@@ -33,14 +33,6 @@ public static class EvidenciaStoragePath
         return Path.GetFullPath(Path.Combine(contentRoot, RutaPredeterminada));
     }
 
-    private static bool EstaDentroDe(string ruta, string baseRuta)
-    {
-        var rutaCompleta = Path.GetFullPath(ruta);
-        var baseCompleta = Path.GetFullPath(baseRuta);
-        var prefijo = baseCompleta.EndsWith(Path.DirectorySeparatorChar)
-            ? baseCompleta
-            : baseCompleta + Path.DirectorySeparatorChar;
-        return rutaCompleta.Equals(baseCompleta, StringComparison.OrdinalIgnoreCase) ||
-            rutaCompleta.StartsWith(prefijo, StringComparison.OrdinalIgnoreCase);
-    }
+    private static bool EstaDentroDe(string ruta, string baseRuta) =>
+        RutaAlmacenamiento.EstaDentro(baseRuta, ruta);
 }

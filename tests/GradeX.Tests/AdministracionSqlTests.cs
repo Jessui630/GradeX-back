@@ -4,6 +4,7 @@ using GradeX.Application.Perfil;
 using GradeX.Application.Workflow;
 using GradeX.Infrastructure.Persistence;
 using GradeX.Infrastructure.Persistence.Commands;
+using GradeX.Infrastructure.Persistence.Sessions;
 using Microsoft.EntityFrameworkCore;
 
 namespace GradeX.Tests;
@@ -186,6 +187,14 @@ public sealed class AdministracionSqlTests
             Assert.Equal("Nombre Actualizado", resultado.Perfil!.NombreCompleto);
             Assert.False(resultado.Perfil.RecibirNotificaciones);
 
+            var sesionStore = new SesionStore(db);
+            var sesion = await sesionStore.CrearAsync(
+                new UsuarioAutenticado(idUsuario, "Nombre Actualizado", correo,
+                    ["Solicitante"]),
+                TimeSpan.FromMinutes(5), CancellationToken.None);
+            Assert.NotNull(await sesionStore.ObtenerAsync(
+                sesion.Token, CancellationToken.None));
+
             var cambiar = new CambiarContrasena(
                 store, hasher, new ContrasenaNoComprometida());
             var incorrecta = await cambiar.EjecutarAsync(
@@ -202,6 +211,8 @@ public sealed class AdministracionSqlTests
             var hash = await store.ObtenerHashAsync(idUsuario, CancellationToken.None);
             Assert.NotNull(hash);
             Assert.True(hasher.Verificar(hash, nueva));
+            Assert.Null(await sesionStore.ObtenerAsync(
+                sesion.Token, CancellationToken.None));
         }
         finally
         {

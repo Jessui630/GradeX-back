@@ -234,6 +234,7 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseGradeXSecurityHeaders(app.Environment.IsDevelopment());
 app.UseExceptionHandler(errorApp => errorApp.Run(ApiExceptionHandler.HandleAsync));
 if (app.Configuration.GetValue("ForwardedHeaders:Enabled", false))
     app.UseForwardedHeaders();
