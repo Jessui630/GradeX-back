@@ -37,6 +37,7 @@ secrets.json
 
 # Artefactos generados de build y migraciones
 /artifacts/
+/coverage/
 
 # Evidencias locales y archivos de trabajo
 /App_Data/

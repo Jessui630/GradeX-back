@@ -1,0 +1,93 @@
+name: SonarCloud analysis (manual activation)
+
+# Flujo manual y desactivado por defecto. No se ejecuta en push ni en pull_request
+# para conservar el análisis automático y el Quality Gate actuales hasta que un
+# administrador de SonarCloud configure SONAR_TOKEN y desactive Automatic Analysis.
+on:
+  workflow_dispatch:
+    inputs:
+      automatic_analysis_disabled:
+        description: 'Confirmo que Automatic Analysis está desactivado en SonarCloud'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    if: ${{ inputs.automatic_analysis_disabled }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      DOTNET_NOLOGO: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Setup Java for SonarScanner
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Require SONAR_TOKEN
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then
+            echo "::error::Falta el secreto SONAR_TOKEN. La importación de cobertura no se activa sin token."
+            exit 1
+          fi
+
+      - name: Install SonarScanner for .NET
+        run: |
+          dotnet tool install --global dotnet-sonarscanner --version 12.1.0
+          echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
+
+      - name: Begin SonarCloud analysis
+        id: begin
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet sonarscanner begin \
+            /k:"Jessui630_GradeX-back" \
+            /o:"jessui630" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Build instrumented by SonarScanner
+        run: dotnet build GradeX.slnx --configuration Release --nologo
+
+      - name: Test with OpenCover coverage
+        run: |
+          dotnet test GradeX.slnx --configuration Release --no-build --nologo \
+            --settings tests/GradeX.Tests/coverage.opencover.runsettings \
+            --collect:"XPlat Code Coverage" \
+            --results-directory coverage/sonar \
+            --logger "trx;LogFileName=tests.trx"
+
+      - name: End SonarCloud analysis
+        if: always() && steps.begin.outcome == 'success'
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Upload coverage and test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gradex-sonar-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/sonar/
+          if-no-files-found: warn
+          retention-days: 14
