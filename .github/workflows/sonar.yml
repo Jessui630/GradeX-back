@@ -2,7 +2,9 @@ name: SonarCloud analysis (manual activation)
 
 # Flujo manual y desactivado por defecto. No se ejecuta en push ni en pull_request
 # para conservar el análisis automático y el Quality Gate actuales hasta que un
-# administrador de SonarCloud configure SONAR_TOKEN y desactive Automatic Analysis.
+# administrador de SonarCloud desactive Automatic Analysis. La autenticación es
+# secretless: SonarSource/sonarqube-auth-action intercambia el token OIDC de GitHub
+# por una credencial temporal; no se almacena SONAR_TOKEN.
 on:
   workflow_dispatch:
     inputs:
@@ -16,10 +18,24 @@ permissions:
   contents: read
 
 jobs:
+  guard:
+    name: Require develop
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject analysis outside develop
+        if: github.ref != 'refs/heads/develop' || github.event_name != 'workflow_dispatch'
+        run: |
+          echo "::error::El análisis secretless solo se autoriza desde develop mediante workflow_dispatch."
+          exit 1
+
   sonar:
+    needs: guard
     if: ${{ inputs.automatic_analysis_disabled }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       DOTNET_NOLOGO: '1'
@@ -41,24 +57,22 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Require SONAR_TOKEN
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          if [ -z "$SONAR_TOKEN" ]; then
-            echo "::error::Falta el secreto SONAR_TOKEN. La importación de cobertura no se activa sin token."
-            exit 1
-          fi
-
       - name: Install SonarScanner for .NET
         run: |
           dotnet tool install --global dotnet-sonarscanner --version 12.1.0
           echo "$HOME/.dotnet/tools" >> "$GITHUB_PATH"
 
+      - name: Authenticate to SonarQube Cloud with OIDC
+        id: sonar-auth
+        uses: SonarSource/sonarqube-auth-action@a0aa643acde4162396015b4f12536c1b9c4aab82 # v1
+        with:
+          project-key: Jessui630_GradeX-back
+          export-env: 'false'
+
       - name: Begin SonarCloud analysis
         id: begin
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ steps.sonar-auth.outputs.sonar-token }}
         run: |
           dotnet sonarscanner begin \
             /k:"Jessui630_GradeX-back" \
@@ -80,7 +94,7 @@ jobs:
       - name: End SonarCloud analysis
         if: always() && steps.begin.outcome == 'success'
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ steps.sonar-auth.outputs.sonar-token }}
         run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
 
       - name: Upload coverage and test results

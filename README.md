@@ -467,16 +467,18 @@ El repositorio está vinculado a SonarQube Cloud (SonarCloud) mediante la integr
 
 El análisis automático de SonarCloud sigue activo y no importa cobertura: las medidas de cobertura del proyecto están vacías. La importación por CI está preparada pero **no activada**:
 
-- `sonar-project.properties` define el proyecto, la organización y la ruta del informe OpenCover.
+- Proyecto SonarCloud `Jessui630_GradeX-back`, organización `jessui630`, rama principal `develop`.
+- `sonar-project.properties` define el proyecto, la organización y `sonar.cs.opencover.reportsPaths=coverage/sonar/**/coverage.opencover.xml`.
 - `tests/GradeX.Tests/coverage.opencover.runsettings` hace que Coverlet emita `coverage.opencover.xml`; SonarScanner for .NET no importa Cobertura para C#.
-- `.github/workflows/sonar.yml` es manual (`workflow_dispatch`) y exige confirmar que Automatic Analysis está desactivado.
+- `.github/workflows/sonar.yml` es manual (`workflow_dispatch`), solo se ejecuta desde `develop` y exige confirmar que Automatic Analysis está desactivado.
+- La autenticación usa `SonarSource/sonarqube-auth-action@v1`: intercambia el token OIDC de GitHub por una credencial temporal. **No se crea ni se almacena un secreto `SONAR_TOKEN`**; la acción entrega la credencial al paso del scanner.
 
 Para activarla, un administrador del proyecto debe:
 
-1. Crear el secreto de repositorio `SONAR_TOKEN` con un token de análisis de SonarCloud.
+1. Confirmar que Secretless Analysis está habilitado para la organización y que el proyecto está vinculado al repositorio.
 2. Desactivar Automatic Analysis en SonarCloud (Administration → Analysis Method).
-3. Ejecutar el workflow manual con la confirmación marcada.
-4. Verificar que el Quality Gate y las medidas de cobertura aparecen, sin duplicar el análisis.
+3. Ejecutar el workflow manual desde `develop` con la confirmación marcada.
+4. Verificar que el Quality Gate y las medidas de cobertura aparecen, sin análisis duplicado.
 5. Solo entonces evaluar si el check de Sonar sustituye al actual.
 
-Mientras no exista el token y Automatic Analysis siga activo, no se declara cobertura importada y el check vigente permanece. Las pruebas SQL se omiten en el runner de GitHub Actions porque no hay una instancia autorizada; la cobertura importada en CI no incluye esos recorridos.
+Mientras Automatic Analysis siga activo, no se declara cobertura importada y el check vigente permanece. Las pruebas SQL se omiten en el runner de GitHub Actions porque no hay una instancia autorizada; la cobertura importada en CI no incluye esos recorridos.
