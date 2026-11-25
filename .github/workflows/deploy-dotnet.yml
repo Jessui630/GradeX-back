@@ -35,19 +35,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Reject publication outside main
-        if: github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/main' || github.event_name != 'workflow_dispatch'
         run: |
-          echo "::error::La publicación solo se autoriza desde main. Referencia recibida: $GITHUB_REF."
+          echo "::error::La publicación solo se autoriza desde main mediante workflow_dispatch. Ref=$GITHUB_REF event=$GITHUB_EVENT_NAME."
           exit 1
 
   quality:
     needs: guard
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'DEPLOY' }}
     uses: ./.github/workflows/quality.yml
 
   package:
     needs: quality
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'DEPLOY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -217,7 +217,7 @@ jobs:
 
   deploy:
     needs: package
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm == 'DEPLOY' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'DEPLOY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: production

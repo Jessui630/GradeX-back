@@ -34,14 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Reject verification outside main
-        if: github.ref != 'refs/heads/main'
+        if: github.ref != 'refs/heads/main' || github.event_name != 'workflow_dispatch'
         run: |
-          echo "::error::La verificación solo se autoriza desde main. Referencia recibida: $GITHUB_REF."
+          echo "::error::La verificación solo se autoriza desde main mediante workflow_dispatch. Ref=$GITHUB_REF event=$GITHUB_EVENT_NAME."
           exit 1
 
   preflight:
     needs: guard
-    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm == 'VERIFY' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'VERIFY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production

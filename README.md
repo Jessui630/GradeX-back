@@ -319,7 +319,7 @@ No se desactiva el análisis global ni se excluyen carpetas completas.
 
 `.github/workflows/quality.yml` se ejecuta en `push`, `pull_request` y `workflow_dispatch`. Usa el SDK seleccionado por `global.json`, no necesita LocalDB ni secretos personalizados, aplica el gate estricto y publica logs, SARIF y TRX como artefactos. También expone `workflow_call` para que otros flujos reutilicen el mismo gate sin duplicar comprobaciones.
 
-La publicación sigue la política `develop` → `release` → `main`: `develop` integra y prueba, `release` prepara y valida la versión, y solo `main` autoriza producción. Ningún workflow despliega desde `develop`, `release` ni una rama `feature/**`. Los flujos de publicación comprueban la referencia y que el commit pertenezca al historial de `main` mediante `scripts/assert-main-publication.sh`; el environment `production` añade la aprobación humana cuando sus reglas están configuradas.
+La publicación sigue la política `develop` → `release` → `main`: `develop` integra y prueba, `release` prepara y valida la versión, y solo `main` autoriza producción. Ningún workflow despliega desde `develop`, `release` ni una rama `feature/**`. Los flujos de publicación comprueban la referencia y que el commit pertenezca al historial de `main` mediante `scripts/assert-main-publication.sh`; el environment `production` añade la aprobación humana cuando sus reglas están configuradas. Los workflows de despliegue, rollback y verificación del backend solo admiten `workflow_dispatch`; un `workflow_run`, `push` u otro evento no puede activarlos. El workflow reutilizable `quality.yml` no despliega y solo se invoca detrás del `guard` del flujo de publicación.
 
 `.github/workflows/deploy-dotnet.yml` es un flujo manual (`workflow_dispatch`) que reutiliza la calidad, publica `GradeX.Api` en Release, genera `gradex-api.zip`, su SHA-256 y un manifiesto, y solo despliega desde `main` tras la confirmación `DEPLOY` y la aprobación del environment. Rechaza otras referencias y commits que no pertenezcan a `main`, incluso dentro de los jobs `package` y `deploy`. No crea recursos de Azure ni cambia su configuración: únicamente valida el destino, publica el ZIP en `GradeX-api` y lo reinicia.
 
@@ -398,6 +398,17 @@ La autenticación con Azure usa OIDC y variables de repositorio, sin secretos de
 | `production` | Environment | Política de rama `main` y revisores obligatorios. Sin esa política, GitHub no autoriza el job de despliegue. |
 
 El environment existente debe cambiarse de su política actual a `main` y añadir revisores obligatorios; los workflows no modifican esa configuración. Verificar que la credencial federada use el sujeto `repo:Jessui630/GradeX-back:environment:production` antes de publicar.
+
+Opciones de protección disponibles en un repositorio público como este:
+
+- **Deployment branch policy**: permitir únicamente `main`.
+- **Required reviewers**: hasta seis personas o equipos; la aprobación se solicita antes de ejecutar el job `deploy`.
+- **Prevent self-review**: impedir que quien solicita la ejecución apruebe su propio despliegue, si la organización lo permite.
+- **Wait timer**: retraso opcional antes de la aprobación.
+- **Admin bypass**: deshabilitarlo cuando la política del repositorio lo permita.
+- **Branch protection/ruleset de `main`**: PR obligatorio, revisiones y status checks de `quality`/SonarCloud antes de fusionar.
+
+La configuración actual del environment y de las ramas debe revisarse en GitHub; este repositorio no la modifica automáticamente.
 
 La credencial federada debe ser exactamente `repo:Jessui630/GradeX-back:environment:production`, con emisor `https://token.actions.githubusercontent.com` y audiencia `api://AzureADTokenExchange`. El rol mínimo previsto es `Website Contributor` sobre `GradeX-api` y `Reader` sobre `gradex-rg` (plan, app y firewall SQL); no se asigna `Contributor` a toda la suscripción. Verificar si el environment `production` exige revisión antes de ejecutar el job de despliegue.
 
