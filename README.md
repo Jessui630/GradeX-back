@@ -278,6 +278,9 @@ No se debe publicar una cuenta de prueba real ni ejecutar la prueba hasta que la
 
 ```powershell
 dotnet test GradeX.slnx
+
+# Cobertura real en formato Cobertura (Coverlet)
+dotnet test GradeX.slnx --collect:"XPlat Code Coverage"
 ```
 
 Pruebas incluidas actualmente:
@@ -447,4 +450,18 @@ El repositorio está vinculado a SonarQube Cloud (SonarCloud) mediante la integr
 
 `scripts/quality.ps1` genera cobertura real con `coverlet.collector` en `coverage.cobertura.xml` dentro del directorio de resultados, y ejecuta `dotnet list package --vulnerable --include-transitive`. El CI publica ambos artefactos, imprime `coverage.lineRate`/`coverage.branchRate` desde `summary.json` y falla si aparecen paquetes vulnerables o si no se genera cobertura. No se fija un porcentaje mínimo ni se declaran porcentajes manualmente.
 
-El análisis automático de SonarCloud no importa cobertura. Para importarla hace falta configurar el secreto `SONAR_TOKEN` y un scanner con `sonar.cs.cobertura.reportsPaths` apuntando al XML. Ese scanner debe sustituir al análisis automático, no duplicarlo. Sin token no se declara cobertura importada.
+El análisis automático de SonarCloud sigue activo y no importa cobertura: las medidas de cobertura del proyecto están vacías. La importación por CI está preparada pero **no activada**:
+
+- `sonar-project.properties` define el proyecto, la organización y la ruta del informe OpenCover.
+- `tests/GradeX.Tests/coverage.opencover.runsettings` hace que Coverlet emita `coverage.opencover.xml`; SonarScanner for .NET no importa Cobertura para C#.
+- `.github/workflows/sonar.yml` es manual (`workflow_dispatch`) y exige confirmar que Automatic Analysis está desactivado.
+
+Para activarla, un administrador del proyecto debe:
+
+1. Crear el secreto de repositorio `SONAR_TOKEN` con un token de análisis de SonarCloud.
+2. Desactivar Automatic Analysis en SonarCloud (Administration → Analysis Method).
+3. Ejecutar el workflow manual con la confirmación marcada.
+4. Verificar que el Quality Gate y las medidas de cobertura aparecen, sin duplicar el análisis.
+5. Solo entonces evaluar si el check de Sonar sustituye al actual.
+
+Mientras no exista el token y Automatic Analysis siga activo, no se declara cobertura importada y el check vigente permanece. Las pruebas SQL se omiten en el runner de GitHub Actions porque no hay una instancia autorizada; la cobertura importada en CI no incluye esos recorridos.
