@@ -105,6 +105,28 @@ public sealed class Sprint2FlujoSqlTests
             escenario.IdSolicitud = solicitud.IdSolicitud;
 
             var asignacionStore = new AsignacionStore(db);
+            Assert.Null(await asignacionStore.ObtenerSolicitudAsync(
+                999999, CancellationToken.None));
+            Assert.Null(await asignacionStore.ObtenerCompatiblesAsync(
+                999999, CancellationToken.None));
+            Assert.Equal(EstadoAsignarEspecialista.SolicitudNoEncontrada,
+                (await asignacionStore.AsignarAsync(
+                    new DatosAsignacion(999999, especialista.IdEspecialista),
+                    CancellationToken.None)).Estado);
+            Assert.Equal(EstadoAsignarEspecialista.EspecialistaNoEncontrado,
+                (await asignacionStore.AsignarAsync(
+                    new DatosAsignacion(solicitud.IdSolicitud, 999999),
+                    CancellationToken.None)).Estado);
+            var pendiente = await asignacionStore.ObtenerSolicitudAsync(
+                solicitud.IdSolicitud, CancellationToken.None);
+            Assert.NotNull(pendiente);
+            Assert.True(pendiente.PuedeAsignarse);
+            var compatiblesPendiente = await asignacionStore.ObtenerCompatiblesAsync(
+                solicitud.IdSolicitud, CancellationToken.None);
+            Assert.NotNull(compatiblesPendiente);
+            Assert.True(compatiblesPendiente.PuedeAsignarse);
+            Assert.NotEmpty(compatiblesPendiente.Especialistas);
+            db.ChangeTracker.Clear();
             var asignada = await asignacionStore.AsignarAsync(
                 new DatosAsignacion(solicitud.IdSolicitud, especialista.IdEspecialista),
                 CancellationToken.None);
@@ -113,6 +135,14 @@ public sealed class Sprint2FlujoSqlTests
             db.ChangeTracker.Clear();
 
             var evaluacionStore = new EvaluacionStore(db, new NotificacionWriter(db));
+            var sinEstado = await evaluacionStore.ListarAsignacionesAsync(
+                idUsuarioEspecialista, "INVALIDO", 1, 20, CancellationToken.None);
+            Assert.Equal(0, sinEstado.Total);
+            var sinEspecialista = await evaluacionStore.ListarAsignacionesAsync(
+                999999, null, 1, 20, CancellationToken.None);
+            Assert.Equal(0, sinEspecialista.Total);
+            Assert.Null(await evaluacionStore.ObtenerAsignacionAsync(
+                solicitud.IdSolicitud, 999999, CancellationToken.None));
             var listado = await evaluacionStore.ListarAsignacionesAsync(
                 idUsuarioEspecialista, null, 1, 20, CancellationToken.None);
             Assert.Equal(1, listado.Total);
@@ -192,6 +222,94 @@ public sealed class Sprint2FlujoSqlTests
                     n.IdTipoNotificacionNavigation.Codigo ==
                         FlujoGradeX.TiposNotificacion.EvidenciaRecibida));
 
+            Assert.Null(await evaluacionStore.ObtenerAsignacionAsync(
+                999999, idUsuarioEspecialista, CancellationToken.None));
+            Assert.Equal(EstadoOperacionEvaluacion.AsignacionNoEncontrada,
+                (await evaluacionStore.GuardarAsync(
+                    999999, idUsuarioEspecialista,
+                    new DatosGuardarEvaluacion(8m, 80m, null, []),
+                    CancellationToken.None)).Estado);
+            Assert.Equal(EstadoOperacionEvaluacion.AsignacionNoEncontrada,
+                (await evaluacionStore.FinalizarAsync(
+                    999999, idUsuarioEspecialista,
+                    new DatosFinalizarEvaluacion(FlujoGradeX.Dictamenes.Autentico,
+                        8m, 80m, null, []),
+                    CancellationToken.None)).Estado);
+            Assert.Equal(EstadoOperacionEvaluacion.AsignacionNoEncontrada,
+                (await evaluacionStore.SolicitarEvidenciaAsync(
+                    999999, idUsuarioEspecialista,
+                    new DatosSolicitudEvidencia(tipoEvidencia.IdTipoEvidencia, "x"),
+                    CancellationToken.None)).Estado);
+
+            var invalido = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(-1m, 80m, null, []),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos, invalido.Estado);
+            Assert.Equal("conditionGrade", invalido.Campo);
+            invalido = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(8m, 101m, null, []),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos, invalido.Estado);
+            Assert.Equal("technicalHealth", invalido.Campo);
+            invalido = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(8m, 80m, new string('x', 1501), []),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos, invalido.Estado);
+            Assert.Equal("observacionesGenerales", invalido.Campo);
+            invalido = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(8m, 80m, null,
+                    [new DatosResultadoCriterio(ids.IdCriterioTexto,
+                        new string('x', 1001), null, null, null)]),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos, invalido.Estado);
+            Assert.Equal("criterios", invalido.Campo);
+            invalido = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(8m, 80m, null,
+                    [new DatosResultadoCriterio(999999, "x", null, null, null)]),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.CriterioNoPertenece, invalido.Estado);
+            invalido = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(8m, 80m, null,
+                    [new DatosResultadoCriterio(ids.IdCriterioNumerico,
+                        "texto en criterio numérico", null, null, null)]),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos, invalido.Estado);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos,
+                (await evaluacionStore.SolicitarEvidenciaAsync(
+                    solicitud.IdSolicitud, idUsuarioEspecialista,
+                    new DatosSolicitudEvidencia(tipoEvidencia.IdTipoEvidencia, " "),
+                    CancellationToken.None)).Estado);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos,
+                (await evaluacionStore.SolicitarEvidenciaAsync(
+                    solicitud.IdSolicitud, idUsuarioEspecialista,
+                    new DatosSolicitudEvidencia(tipoEvidencia.IdTipoEvidencia,
+                        new string('x', 601)),
+                    CancellationToken.None)).Estado);
+            Assert.Equal(EstadoOperacionEvaluacion.CriterioNoPertenece,
+                (await evaluacionStore.SolicitarEvidenciaAsync(
+                    solicitud.IdSolicitud, idUsuarioEspecialista,
+                    new DatosSolicitudEvidencia(999999, "x"),
+                    CancellationToken.None)).Estado);
+
+            var dictamenInvalido = await evaluacionStore.FinalizarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosFinalizarEvaluacion("INVALIDO", 8m, 80m, null,
+                    [
+                        new DatosResultadoCriterio(ids.IdCriterioNumerico, null, 9m, null, null),
+                        new DatosResultadoCriterio(ids.IdCriterioTexto, "Sin hallazgos", null, null, null)
+                    ]),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DictamenInvalido,
+                dictamenInvalido.Estado);
+            Assert.Equal("dictamen", dictamenInvalido.Campo);
+            db.ChangeTracker.Clear();
+
             var sinCalificacion = await evaluacionStore.FinalizarAsync(
                 solicitud.IdSolicitud, idUsuarioEspecialista,
                 new DatosFinalizarEvaluacion(FlujoGradeX.Dictamenes.Autentico,
@@ -231,6 +349,29 @@ public sealed class Sprint2FlujoSqlTests
             Assert.NotNull(final.Evaluacion.FechaFin);
             Assert.Equal(FlujoGradeX.EstadosSolicitud.Finalizada,
                 await EstadoSolicitudAsync(db, solicitud.IdSolicitud));
+            db.ChangeTracker.Clear();
+            Assert.Equal(EstadoOperacionEvaluacion.EstadoInvalido,
+                (await evaluacionStore.GuardarAsync(
+                    solicitud.IdSolicitud, idUsuarioEspecialista,
+                    new DatosGuardarEvaluacion(8m, 80m, null, []),
+                    CancellationToken.None)).Estado);
+            Assert.Equal(EstadoOperacionEvaluacion.EstadoInvalido,
+                (await evaluacionStore.SolicitarEvidenciaAsync(
+                    solicitud.IdSolicitud, idUsuarioEspecialista,
+                    new DatosSolicitudEvidencia(tipoEvidencia.IdTipoEvidencia, "x"),
+                    CancellationToken.None)).Estado);
+            Assert.Null(await evaluacionStore.ObtenerArchivoEvidenciaAsync(
+                solicitud.IdSolicitud, 999999, idUsuarioEspecialista,
+                CancellationToken.None));
+            var finalizada = await asignacionStore.ObtenerSolicitudAsync(
+                solicitud.IdSolicitud, CancellationToken.None);
+            Assert.NotNull(finalizada);
+            Assert.False(finalizada.PuedeAsignarse);
+            var compatiblesFinalizada = await asignacionStore.ObtenerCompatiblesAsync(
+                solicitud.IdSolicitud, CancellationToken.None);
+            Assert.NotNull(compatiblesFinalizada);
+            Assert.False(compatiblesFinalizada.PuedeAsignarse);
+            Assert.Empty(compatiblesFinalizada.Especialistas);
 
             var cambioTipo = await new CatalogoAdminStore(db).ActualizarCriterioAsync(
                 ids.IdCriterioNumerico,
@@ -286,6 +427,22 @@ public sealed class Sprint2FlujoSqlTests
             var noElegible = await certificadoStore.EmitirAsync(
                 solicitud.IdSolicitud, idUsuarioEspecialista, CancellationToken.None);
             Assert.Equal(EstadoOperacionCertificado.YaExiste, noElegible.Estado);
+            Assert.Equal(EstadoOperacionCertificado.NoEncontrado,
+                (await certificadoStore.EmitirAsync(
+                    999999, idUsuarioEspecialista, CancellationToken.None)).Estado);
+            Assert.Equal(EstadoOperacionCertificado.NoAutorizado,
+                (await certificadoStore.EmitirAsync(
+                    solicitud.IdSolicitud, idSolicitante, CancellationToken.None)).Estado);
+            Assert.Null(await certificadoStore.ObtenerPorSolicitudAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista, CancellationToken.None));
+            Assert.Null(await certificadoStore.VerificarAsync(
+                Guid.NewGuid(), CancellationToken.None));
+            Assert.Null(await certificadoStore.VerificarPorNumeroAsync(
+                "NO-EXISTE", CancellationToken.None));
+            var porNumero = await certificadoStore.VerificarPorNumeroAsync(
+                certificado.Certificado.NumeroCertificado, CancellationToken.None);
+            Assert.NotNull(porNumero);
+            Assert.Equal(certificado.Certificado.NumeroCertificado, porNumero.NumeroCertificado);
 
             var notificaciones = new NotificacionStore(db);
             var listadoNotificaciones = await notificaciones.ListarAsync(

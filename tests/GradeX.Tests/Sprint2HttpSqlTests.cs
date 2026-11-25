@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using GradeX.Application.Cuentas;
 using GradeX.Application.Workflow;
@@ -117,6 +118,13 @@ public sealed class Sprint2HttpSqlTests
 
             Assert.Equal(HttpStatusCode.NotFound,
                 (await admin.GetAsync($"/api/administracion/solicitudes/{idBorrador}")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await admin.GetAsync(
+                    $"/api/administracion/solicitudes/{idBorrador}/especialistas-compatibles")).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    $"/api/administracion/solicitudes/{idBorrador}/asignacion",
+                    new { idEspecialista })).StatusCode);
 
             var sinCsrf = await admin.PostAsJsonAsync(
                 $"/api/administracion/solicitudes/{idSolicitud}/asignacion",
@@ -134,6 +142,10 @@ public sealed class Sprint2HttpSqlTests
                 Assert.True(respuesta.StatusCode == HttpStatusCode.Created,
                     await respuesta.Content.ReadAsStringAsync());
             }
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    $"/api/administracion/solicitudes/{idSolicitud}/asignacion",
+                    new { idEspecialista })).StatusCode);
 
             var asignaciones = await especialista.GetAsync(
                 "/api/especialista/asignaciones?pagina=1&tamanoPagina=50");
@@ -763,6 +775,246 @@ public sealed class Sprint2HttpSqlTests
                     $"/api/certificados/verificar/{token}")).StatusCode);
 
             Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Post,
+                    "/api/administracion/catalogo/categorias")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Post,
+                    "/api/administracion/catalogo/marcas")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/marcas/{idMarca}")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}/marcas/{idMarca}")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}/requisitos")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Post,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}/criterios")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/criterios/{idCriterio}")).StatusCode);
+
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    "/api/administracion/catalogo/categorias/999999",
+                    new { nombre = "Inexistente", descripcion = "x", activa = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    "/api/administracion/catalogo/marcas/999999",
+                    new { nombre = "Inexistente", activa = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/categorias/999999/marcas/{idMarca}",
+                    new { activa = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await admin.GetAsync(
+                    "/api/administracion/catalogo/categorias/999999/requisitos")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    "/api/administracion/catalogo/categorias/999999/requisitos",
+                    new
+                    {
+                        campos = new[]
+                        {
+                            new { campo = "NOMBRE", obligatorio = true, longitudMaxima = 150, orden = 1 }
+                        },
+                        evidencias = new[]
+                        {
+                            new { idTipoEvidencia = idTipoVista, obligatorio = true, cantidadMinima = 1, cantidadMaxima = 1, orden = 1 }
+                        }
+                    })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    "/api/administracion/catalogo/categorias/999999/criterios",
+                    new
+                    {
+                        nombre = "Inexistente",
+                        tipoDato = "TEXTO",
+                        obligatorio = false,
+                        orden = 1,
+                        activo = true
+                    })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    "/api/administracion/catalogo/criterios/999999",
+                    new
+                    {
+                        nombre = "Inexistente",
+                        tipoDato = "TEXTO",
+                        obligatorio = false,
+                        orden = 1,
+                        activo = true
+                    })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await admin.GetAsync("/api/administracion/solicitudes/999999")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await admin.GetAsync(
+                    "/api/administracion/solicitudes/999999/especialistas-compatibles")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    $"/api/administracion/solicitudes/{idSolicitud}/asignacion",
+                    new { idEspecialista = 0 })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    "/api/administracion/solicitudes/999999/asignacion",
+                    new { idEspecialista = idsEspecialistas[0] })).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    $"/api/administracion/solicitudes/{idSolicitud}/asignacion",
+                    new { idEspecialista = idsEspecialistas[0] })).StatusCode);
+
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await especialista.GetAsync(
+                    "/api/especialista/asignaciones/999999")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await especialista.GetAsync(
+                    $"/api/especialista/asignaciones/{idSolicitud}/evidencias/999999/archivo")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarSinCuerpoAsync(especialista,
+                    "/api/especialista/asignaciones/999999/certificado")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(especialista, HttpMethod.Put,
+                    "/api/especialista/asignaciones/999999/evaluacion",
+                    new { conditionGrade = 9m, technicalHealth = 90m, resultados = Array.Empty<object>() })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(especialista, HttpMethod.Post,
+                    "/api/especialista/asignaciones/999999/dictamen",
+                    new { dictamen = "AUTENTICO", conditionGrade = 9m, technicalHealth = 90m, resultados = Array.Empty<object>() })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(especialista, HttpMethod.Post,
+                    "/api/especialista/asignaciones/999999/solicitar-evidencia",
+                    new { idTipoEvidencia = idTipoVista, descripcion = "x" })).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(especialista, HttpMethod.Put,
+                    $"/api/especialista/asignaciones/{idSolicitud}/evaluacion",
+                    new { conditionGrade = 9m, technicalHealth = 90m, resultados = Array.Empty<object>() })).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(especialista, HttpMethod.Post,
+                    $"/api/especialista/asignaciones/{idSolicitud}/dictamen",
+                    new { dictamen = "AUTENTICO", conditionGrade = 9m, technicalHealth = 90m, resultados = Array.Empty<object>() })).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(especialista, HttpMethod.Post,
+                    $"/api/especialista/asignaciones/{idSolicitud}/solicitar-evidencia",
+                    new { idTipoEvidencia = idTipoVista, descripcion = "x" })).StatusCode);
+
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(solicitante, HttpMethod.Put,
+                    "/api/perfil")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarCuerpoNuloAsync(solicitante, HttpMethod.Put,
+                    "/api/perfil/contrasena")).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Put, "/api/perfil",
+                    new { nombreCompleto = " ", recibirNotificaciones = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await solicitante.GetAsync("/api/certificados/solicitud/999999")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await anonimo.GetAsync(
+                    $"/api/certificados/verificar/{Guid.NewGuid()}")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await anonimo.GetAsync("/api/certificados/verificar/numero/AB")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await anonimo.GetAsync("/api/certificados/verificar/numero/NO-EXISTE")).StatusCode);
+
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Put, "/api/perfil",
+                    new { nombreCompleto = new string('x', 151), recibirNotificaciones = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Put,
+                    "/api/perfil/contrasena",
+                    new { contrasenaActual = "", contrasenaNueva = contrasenaNueva })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Put,
+                    "/api/perfil/contrasena",
+                    new { contrasenaActual = Contrasena, contrasenaNueva = "corta" })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Put,
+                    "/api/perfil/contrasena",
+                    new
+                    {
+                        contrasenaActual = Contrasena,
+                        contrasenaNueva = new string('x', 129)
+                    })).StatusCode);
+
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    "/api/administracion/catalogo/categorias",
+                    new { nombre = $"Categoria cobertura {sufijo}", descripcion = "Duplicada", activa = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}",
+                    new { nombre = new string('x', 101), descripcion = "x", activa = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/marcas/{idMarca}",
+                    new { nombre = " ", activa = true })).StatusCode);
+            Assert.Equal(HttpStatusCode.Conflict,
+                (await EnviarJsonAsync(admin, HttpMethod.Post,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}/criterios",
+                    new
+                    {
+                        nombre = "Condición cobertura",
+                        tipoDato = "NUMERICO",
+                        obligatorio = true,
+                        orden = 2,
+                        activo = true
+                    })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/criterios/{idCriterio}",
+                    new
+                    {
+                        nombre = " ",
+                        tipoDato = "NUMERICO",
+                        obligatorio = true,
+                        orden = 1,
+                        activo = true
+                    })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/criterios/{idCriterio}",
+                    new
+                    {
+                        nombre = "Condición cobertura",
+                        descripcion = new string('x', 501),
+                        tipoDato = "NUMERICO",
+                        obligatorio = true,
+                        orden = 1,
+                        activo = true
+                    })).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,
+                (await EnviarJsonAsync(admin, HttpMethod.Put,
+                    $"/api/administracion/catalogo/categorias/{idCategoria}/requisitos",
+                    new
+                    {
+                        campos = new[]
+                        {
+                            new { campo = "NO_EXISTE", obligatorio = true, longitudMaxima = 10, orden = 1 }
+                        },
+                        evidencias = new[]
+                        {
+                            new { idTipoEvidencia = idTipoVista, obligatorio = true, cantidadMinima = 1, cantidadMaxima = 1, orden = 1 }
+                        }
+                    })).StatusCode);
+
+            Assert.Equal(HttpStatusCode.OK,
+                (await solicitante.GetAsync("/api/notificaciones/no-leidas")).StatusCode);
+            Assert.Equal(HttpStatusCode.OK,
+                (await solicitante.GetAsync(
+                    "/api/notificaciones?pagina=1&tamanoPagina=1&soloNoLeidas=true")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Patch,
+                    "/api/notificaciones/999999/leida", new { })).StatusCode);
+            Assert.Equal(HttpStatusCode.OK,
+                (await EnviarJsonAsync(solicitante, HttpMethod.Patch,
+                    "/api/notificaciones/leer-todas", new { })).StatusCode);
+
+            Assert.Equal(HttpStatusCode.BadRequest,
                 (await EnviarJsonAsync(solicitante, HttpMethod.Put,
                     "/api/perfil/contrasena",
                     new
@@ -827,6 +1079,17 @@ public sealed class Sprint2HttpSqlTests
         HttpClient cliente, string ruta)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, ruta);
+        request.Headers.Add("X-CSRF-Token", await ObtenerCsrfAsync(cliente));
+        return await cliente.SendAsync(request);
+    }
+
+    private static async Task<HttpResponseMessage> EnviarCuerpoNuloAsync(
+        HttpClient cliente, HttpMethod metodo, string ruta)
+    {
+        using var request = new HttpRequestMessage(metodo, ruta)
+        {
+            Content = new StringContent("null", Encoding.UTF8, "application/json")
+        };
         request.Headers.Add("X-CSRF-Token", await ObtenerCsrfAsync(cliente));
         return await cliente.SendAsync(request);
     }
