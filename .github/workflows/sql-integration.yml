@@ -1,0 +1,63 @@
+name: SQL integration (Windows LocalDB)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - release
+  pull_request:
+    branches:
+      - main
+      - develop
+      - release
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sql-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sql:
+    name: SQL integration tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          global-json-file: global.json
+
+      - name: Build Release
+        run: dotnet build GradeX.slnx --configuration Release --nologo
+
+      - name: Initialize LocalDB integration database
+        shell: pwsh
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -NoBuild
+
+      - name: Run SQL integration tests with OpenCover
+        shell: pwsh
+        run: ./scripts/Run-GradeXTestsWithOpenCover.ps1 -ResultsDirectory coverage/sql
+
+      - name: Upload OpenCover report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gradex-sql-opencover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/sql/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Drop LocalDB integration database
+        if: always()
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -Drop -NoBuild

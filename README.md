@@ -291,8 +291,9 @@ Pruebas incluidas actualmente:
 - Pruebas de integración SQL contra `GradeX_IntegrationTests`: concurrencia, atomicidad, colación, sesión persistente entre contextos, solicitudes, evidencias y aislamiento por propietario.
 - La prueba externa de Pwned Passwords es optativa y se habilita con `GRADEX_PWNED_LIVE_TEST=1`.
 - Las pruebas SQL requieren `GRADEX_INTEGRATION_TEST_CONNECTION` apuntando explícitamente a `MSSQLLocalDB/GradeX_IntegrationTests`; no se ejecutan contra `GradeX_Dev` ni Azure.
+- `.github/workflows/sql-integration.yml` las ejecuta en `windows-latest` con una base LocalDB aislada, migraciones EF y limpieza final; falla si alguna prueba SQL queda omitida.
 
-Las pruebas que requieren SQL se omiten cuando no existe la variable de integración. El resultado exacto se registra con el comando ejecutado; no se fija un contador manual en este documento.
+Las pruebas que requieren SQL se omiten localmente cuando no existe la variable de integración. En CI, el workflow de integración configura la variable y exige ejecución real: solo se permite la omisión de la prueba externa de Pwned Passwords.
 
 ## Calidad de código
 
@@ -465,20 +466,22 @@ El repositorio está vinculado a SonarQube Cloud (SonarCloud) mediante la integr
 
 `scripts/quality.ps1` genera cobertura real con `coverlet.collector` en `coverage.cobertura.xml` dentro del directorio de resultados, y ejecuta `dotnet list package --vulnerable --include-transitive`. El CI publica ambos artefactos, imprime `coverage.lineRate`/`coverage.branchRate` desde `summary.json` y falla si aparecen paquetes vulnerables o si no se genera cobertura. No se fija un porcentaje mínimo ni se declaran porcentajes manualmente.
 
-El análisis automático de SonarCloud sigue activo y no importa cobertura: las medidas de cobertura del proyecto están vacías. La importación por CI está preparada pero **no activada**:
+El análisis automático de SonarCloud está desactivado desde la ejecución manual previa y la cobertura registrada es 0,0 %: el Quality Gate está en **ERROR** por `new_coverage < 80`. La importación corregida está preparada pero **no validada** en un análisis nuevo:
 
 - Proyecto SonarCloud `Jessui630_GradeX-back`, organización `jessui630`, rama principal `develop`.
 - `sonar-project.properties` define el proyecto, la organización y `sonar.cs.opencover.reportsPaths=coverage/sonar/**/coverage.opencover.xml`.
 - `tests/GradeX.Tests/coverage.opencover.runsettings` hace que Coverlet emita `coverage.opencover.xml`; SonarScanner for .NET no importa Cobertura para C#.
-- `.github/workflows/sonar.yml` es manual (`workflow_dispatch`), solo se ejecuta desde `develop` y exige confirmar que Automatic Analysis está desactivado.
+- `.github/workflows/sonar.yml` es manual (`workflow_dispatch`), solo se ejecuta desde `develop`, usa `windows-latest`, inicializa `MSSQLLocalDB/GradeX_IntegrationTests`, aplica las migraciones existentes y ejecuta también las pruebas SQL.
+- El job Sonar sigue el orden: autenticación OIDC → `begin` con OpenCover → build instrumentado → inicialización LocalDB con `--no-build` → suite completa con OpenCover/TRX → validación de pruebas omitidas, XML y fuentes → `end` → limpieza de la base.
+- `.github/workflows/sql-integration.yml` ejecuta la misma suite con OpenCover en Windows y publica el reporte como artifact; así el check independiente demuestra la ruta completa de pruebas y cobertura.
+- El paso `begin` recibe explícitamente la ruta OpenCover y un paso previo a `end` valida XML, puntos visitados y fuentes del repositorio.
 - La autenticación usa `SonarSource/sonarqube-auth-action@v1`: intercambia el token OIDC de GitHub por una credencial temporal. **No se crea ni se almacena un secreto `SONAR_TOKEN`**; la acción entrega la credencial al paso del scanner.
 
-Para activarla, un administrador del proyecto debe:
+Para validar la cobertura, un administrador del proyecto debe:
 
 1. Confirmar que Secretless Analysis está habilitado para la organización y que el proyecto está vinculado al repositorio.
-2. Desactivar Automatic Analysis en SonarCloud (Administration → Analysis Method).
-3. Ejecutar el workflow manual desde `develop` con la confirmación marcada.
-4. Verificar que el Quality Gate y las medidas de cobertura aparecen, sin análisis duplicado.
-5. Solo entonces evaluar si el check de Sonar sustituye al actual.
+2. Ejecutar el workflow manual desde `develop` con la confirmación marcada, después del merge.
+3. Verificar que el Quality Gate y las medidas de cobertura aparecen, sin análisis duplicado.
+4. Mantener el umbral de New Code Coverage en 80 % y revisar el resultado real; no se declara aprobado hasta comprobarlo.
 
-Mientras Automatic Analysis siga activo, no se declara cobertura importada y el check vigente permanece. Las pruebas SQL se omiten en el runner de GitHub Actions porque no hay una instancia autorizada; la cobertura importada en CI no incluye esos recorridos.
+El workflow de integración Windows y el de Sonar ejecutan las pruebas SQL reales; la cobertura backend ya no depende de omitirlas. No se declara cobertura importada hasta que el análisis manual posterior al merge confirme el resultado.
