@@ -36,43 +36,28 @@ jobs:
         with:
           global-json-file: global.json
 
+      - name: Build Release
+        run: dotnet build GradeX.slnx --configuration Release --nologo
+
       - name: Initialize LocalDB integration database
         shell: pwsh
-        run: ./scripts/Initialize-GradeXIntegrationDb.ps1
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -NoBuild
 
-      - name: Run SQL integration tests
+      - name: Run SQL integration tests with OpenCover
         shell: pwsh
-        env:
-          GRADEX_INTEGRATION_TEST_CONNECTION: 'Server=(localdb)\MSSQLLocalDB;Database=GradeX_IntegrationTests;Trusted_Connection=True;TrustServerCertificate=True'
-        run: |
-          dotnet test GradeX.slnx --configuration Release --nologo `
-            --logger "trx;LogFileName=sql.trx" `
-            --results-directory TestResults
+        run: ./scripts/Run-GradeXTestsWithOpenCover.ps1 -ResultsDirectory coverage/sql
 
-      - name: Require real SQL execution
-        shell: pwsh
-        run: |
-          $trx = Get-ChildItem TestResults -Recurse -Filter sql.trx |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $trx) { throw 'No se generó el archivo TRX.' }
-          [xml]$doc = Get-Content -LiteralPath $trx.FullName -Raw
-          $results = @($doc.GetElementsByTagName('UnitTestResult'))
-          $passed = @($results | Where-Object { $_.outcome -eq 'Passed' }).Count
-          $skipped = @($results | Where-Object { $_.outcome -eq 'NotExecuted' })
-          $unexpected = @($skipped | Where-Object {
-            $_.testName -notmatch 'PwnedPasswordsLiveTests'
-          })
-          if ($unexpected.Count -gt 0) {
-            $names = $unexpected | ForEach-Object { $_.testName }
-            throw "Pruebas omitidas inesperadamente: $($names -join ', ')"
-          }
-          if ($passed -lt 126) {
-            throw "Solo $passed pruebas correctas; se esperaban al menos 126 con SQL."
-          }
-          Write-Host "SQL real: $passed correctas, $($skipped.Count) omitida(s) externas."
+      - name: Upload OpenCover report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gradex-sql-opencover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage/sql/
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Drop LocalDB integration database
         if: always()
         shell: pwsh
         continue-on-error: true
-        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -Drop
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -Drop -NoBuild

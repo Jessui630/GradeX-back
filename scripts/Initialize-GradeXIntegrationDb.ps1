@@ -1,5 +1,6 @@
 param(
-    [switch] $Drop
+    [switch] $Drop,
+    [switch] $NoBuild
 )
 
 Set-StrictMode -Version Latest
@@ -44,17 +45,24 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw 'dotnet tool restore falló.'
     }
-    dotnet restore GradeX.slnx --nologo
-    if ($LASTEXITCODE -ne 0) {
-        throw 'dotnet restore falló.'
+    if (-not $NoBuild) {
+        dotnet restore GradeX.slnx --nologo
+        if ($LASTEXITCODE -ne 0) {
+            throw 'dotnet restore falló.'
+        }
+    }
+
+    $efArguments = @(
+        '--project', 'src/GradeX.Infrastructure',
+        '--startup-project', 'src/GradeX.Api',
+        '--configuration', 'Release'
+    )
+    if ($NoBuild) {
+        $efArguments += '--no-build'
     }
 
     if ($Drop) {
-        dotnet ef database drop `
-            --force `
-            --project src/GradeX.Infrastructure `
-            --startup-project src/GradeX.Api `
-            --configuration Release
+        dotnet ef database drop --force @efArguments
         if ($LASTEXITCODE -ne 0) {
             throw 'No se pudo eliminar la base de integración.'
         }
@@ -62,10 +70,7 @@ try {
         return
     }
 
-    dotnet ef database update `
-        --project src/GradeX.Infrastructure `
-        --startup-project src/GradeX.Api `
-        --configuration Release
+    dotnet ef database update @efArguments
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudieron aplicar las migraciones a la base de integración.'
     }

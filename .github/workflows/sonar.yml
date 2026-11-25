@@ -64,10 +64,6 @@ jobs:
           "$env:USERPROFILE\.dotnet\tools" |
             Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Initialize LocalDB integration database
-        shell: pwsh
-        run: ./scripts/Initialize-GradeXIntegrationDb.ps1
-
       - name: Authenticate to SonarQube Cloud with OIDC
         id: sonar-auth
         uses: SonarSource/sonarqube-auth-action@a0aa643acde4162396015b4f12536c1b9c4aab82 # v1
@@ -91,79 +87,13 @@ jobs:
       - name: Build instrumented by SonarScanner
         run: dotnet build GradeX.slnx --configuration Release --nologo
 
-      - name: Test with OpenCover coverage
+      - name: Initialize LocalDB integration database after instrumented build
         shell: pwsh
-        env:
-          GRADEX_INTEGRATION_TEST_CONNECTION: 'Server=(localdb)\MSSQLLocalDB;Database=GradeX_IntegrationTests;Trusted_Connection=True;TrustServerCertificate=True'
-        run: |
-          dotnet test GradeX.slnx --configuration Release --no-build --nologo `
-            --settings tests/GradeX.Tests/coverage.opencover.runsettings `
-            --collect:"XPlat Code Coverage" `
-            --results-directory coverage/sonar `
-            --logger "trx;LogFileName=tests.trx"
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -NoBuild
 
-      - name: Require real SQL execution
+      - name: Run full test suite with SQL and OpenCover
         shell: pwsh
-        run: |
-          $trx = Get-ChildItem coverage/sonar -Recurse -Filter tests.trx |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 1
-          if (-not $trx) { throw 'No se generó el archivo TRX.' }
-          [xml]$doc = Get-Content -LiteralPath $trx.FullName -Raw
-          $results = @($doc.GetElementsByTagName('UnitTestResult'))
-          $passed = @($results | Where-Object { $_.outcome -eq 'Passed' }).Count
-          $skipped = @($results | Where-Object { $_.outcome -eq 'NotExecuted' })
-          $unexpected = @($skipped | Where-Object {
-            $_.testName -notmatch 'PwnedPasswordsLiveTests'
-          })
-          if ($unexpected.Count -gt 0) {
-            $names = $unexpected | ForEach-Object { $_.testName }
-            throw "Pruebas omitidas inesperadamente: $($names -join ', ')"
-          }
-          if ($passed -lt 126) {
-            throw "Solo $passed pruebas correctas; se esperaban al menos 126 con SQL."
-          }
-          Write-Host "SQL real: $passed correctas, $($skipped.Count) omitida(s) externas."
-
-      - name: Verify OpenCover report
-        shell: pwsh
-        run: |
-          $report = Get-ChildItem coverage/sonar -Recurse `
-            -Filter coverage.opencover.xml -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not $report) {
-            throw 'No se generó coverage.opencover.xml.'
-          }
-          [xml]$xml = Get-Content -LiteralPath $report.FullName -Raw
-          if ($xml.DocumentElement.LocalName -ne 'CoverageSession') {
-            throw "Raíz XML inesperada: $($xml.DocumentElement.LocalName)"
-          }
-          $summary = $xml.SelectSingleNode('/CoverageSession/Summary')
-          if (-not $summary) {
-            throw 'Falta Summary en el reporte OpenCover.'
-          }
-          $total = [int]$summary.numSequencePoints
-          $visited = [int]$summary.visitedSequencePoints
-          $points = @($xml.SelectNodes('//SequencePoint')).Count
-          if ($total -le 0 -or $visited -le 0 -or $points -le 0) {
-            throw 'El reporte no contiene cobertura real.'
-          }
-          $repo = (Get-Location).Path
-          $checked = 0
-          foreach ($file in @($xml.SelectNodes('//File'))) {
-            $full = [string]$file.fullPath
-            if ([string]::IsNullOrWhiteSpace($full)) { continue }
-            $relative = [System.IO.Path]::GetRelativePath($repo, $full)
-            if ($relative.StartsWith('..')) { continue }
-            if ($relative -match '(^|[\\/])(obj|bin)([\\/]|$)') { continue }
-            if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
-              throw "Falta el archivo fuente: $relative"
-            }
-            $checked++
-          }
-          if ($checked -le 0) {
-            throw 'El reporte no referencia archivos fuente del repositorio.'
-          }
-          Write-Host "OpenCover válido: $visited/$total puntos de secuencia, $points entradas, $checked archivos fuente"
+        run: ./scripts/Run-GradeXTestsWithOpenCover.ps1
 
       - name: End SonarCloud analysis
         if: always() && steps.begin.outcome == 'success'
@@ -185,4 +115,4 @@ jobs:
         if: always()
         shell: pwsh
         continue-on-error: true
-        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -Drop
+        run: ./scripts/Initialize-GradeXIntegrationDb.ps1 -Drop -NoBuild

@@ -472,6 +472,8 @@ El análisis automático de SonarCloud está desactivado desde la ejecución man
 - `sonar-project.properties` define el proyecto, la organización y `sonar.cs.opencover.reportsPaths=coverage/sonar/**/coverage.opencover.xml`.
 - `tests/GradeX.Tests/coverage.opencover.runsettings` hace que Coverlet emita `coverage.opencover.xml`; SonarScanner for .NET no importa Cobertura para C#.
 - `.github/workflows/sonar.yml` es manual (`workflow_dispatch`), solo se ejecuta desde `develop`, usa `windows-latest`, inicializa `MSSQLLocalDB/GradeX_IntegrationTests`, aplica las migraciones existentes y ejecuta también las pruebas SQL.
+- El job Sonar sigue el orden: autenticación OIDC → `begin` con OpenCover → build instrumentado → inicialización LocalDB con `--no-build` → suite completa con OpenCover/TRX → validación de pruebas omitidas, XML y fuentes → `end` → limpieza de la base.
+- `.github/workflows/sql-integration.yml` ejecuta la misma suite con OpenCover en Windows y publica el reporte como artifact; así el check independiente demuestra la ruta completa de pruebas y cobertura.
 - El paso `begin` recibe explícitamente la ruta OpenCover y un paso previo a `end` valida XML, puntos visitados y fuentes del repositorio.
 - La autenticación usa `SonarSource/sonarqube-auth-action@v1`: intercambia el token OIDC de GitHub por una credencial temporal. **No se crea ni se almacena un secreto `SONAR_TOKEN`**; la acción entrega la credencial al paso del scanner.
 
