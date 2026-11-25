@@ -202,6 +202,7 @@ public sealed class SolicitudStore : ISolicitudStore
             return new ResultadoEnviarSolicitud(EstadoEnviarSolicitud.RequisitosNoConfigurados);
 
         var ahora = DateTime.UtcNow;
+        await using var transaccion = await db.Database.BeginTransactionAsync(cancellationToken);
         var actualizadas = await db.SolicitudEvaluacions
             .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante &&
                 s.IdEstadoSolicitud == estadoBorrador.IdEstadoSolicitud)
@@ -217,7 +218,23 @@ public sealed class SolicitudStore : ISolicitudStore
                 .Select(s => s.IdEstadoSolicitudNavigation.Codigo)
                 .SingleOrDefaultAsync(cancellationToken);
             if (estadoActual != EstadoPendiente)
+            {
+                await transaccion.RollbackAsync(cancellationToken);
                 return new ResultadoEnviarSolicitud(EstadoEnviarSolicitud.EstadoInvalido);
+            }
+            await transaccion.RollbackAsync(cancellationToken);
+        }
+        else
+        {
+            await notificaciones.CrearAsync(
+                idSolicitante,
+                idSolicitud,
+                GradeX.Application.Workflow.FlujoGradeX.TiposNotificacion.CambioEstado,
+                "Solicitud recibida",
+                $"Recibimos tu solicitud {solicitud.Folio}. Quedó pendiente de asignación de especialista.",
+                cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaccion.CommitAsync(cancellationToken);
         }
 
         return new ResultadoEnviarSolicitud(
@@ -304,6 +321,8 @@ public sealed class SolicitudStore : ISolicitudStore
                 .Include(s => s.Evaluacion)
                     .ThenInclude(e => e!.ResultadoCriterios)
                     .ThenInclude(r => r.IdCriterioNavigation)
+                .Include(s => s.Evaluacion)
+                    .ThenInclude(e => e!.Certificado)
                 .AsSplitQuery()
                 .Where(s => s.IdSolicitud == idSolicitud && s.IdSolicitante == idSolicitante)
                 .SingleOrDefaultAsync(ct),
@@ -401,7 +420,7 @@ public sealed class SolicitudStore : ISolicitudStore
             seguimiento.OrderBy(e => e.Fecha).ToList(),
             especialista,
             evaluacion,
-            CertificadoDisponible: false,
+            CertificadoDisponible: solicitud.Evaluacion?.Certificado is not null,
             EvidenciaAdicionalSolicitada: evidenciaAdicional,
             ResultadosEvaluacion: resultadosEvaluacion);
     }
@@ -464,7 +483,10 @@ public sealed class SolicitudStore : ISolicitudStore
         var maximo = Math.Max(1, requisito.CantidadMaxima);
         if (existentes.Count >= maximo)
         {
-            if (maximo > 1)
+            // En un borrador se permite reemplazar la única imagen de un tipo.
+            // Cuando el especialista ya solicitó evidencia, la evidencia previa
+            // forma parte del expediente y no debe desactivarse.
+            if (!esBorrador || maximo > 1)
                 return new ResultadoAgregarEvidencia(EstadoAgregarEvidencia.LimiteAlcanzado);
 
             var anterior = existentes[0];

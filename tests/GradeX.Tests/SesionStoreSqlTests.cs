@@ -99,6 +99,33 @@ public sealed class SesionStoreSqlTests
     }
 
     [LocalDbFact]
+    public async Task UsuarioInactivoNoPuedeReutilizarSuSesion()
+    {
+        var correo = $"sesion-{Guid.NewGuid():N}@example.test";
+        await using var db = await SqlIntegration.AbrirContextoAsync();
+        var idUsuario = await SqlIntegration.CrearUsuarioAsync(db, correo);
+        try
+        {
+            var store = new SesionStore(db);
+            var sesion = await store.CrearAsync(
+                new UsuarioAutenticado(idUsuario, "Usuario de prueba", correo, ["Solicitante"]),
+                TimeSpan.FromMinutes(5), CancellationToken.None);
+            Assert.NotNull(await store.ObtenerAsync(sesion.Token, CancellationToken.None));
+
+            await db.Usuarios.Where(u => u.IdUsuario == idUsuario)
+                .ExecuteUpdateAsync(update => update.SetProperty(u => u.Activo, false));
+
+            Assert.Null(await store.ObtenerAsync(sesion.Token, CancellationToken.None));
+        }
+        finally
+        {
+            await db.Usuarios.Where(u => u.IdUsuario == idUsuario)
+                .ExecuteUpdateAsync(update => update.SetProperty(u => u.Activo, true));
+            await SqlIntegration.LimpiarUsuarioAsync(db, correo);
+        }
+    }
+
+    [LocalDbFact]
     public async Task SesionExpiradaNoEsValida()
     {
         var correo = $"sesion-{Guid.NewGuid():N}@example.test";

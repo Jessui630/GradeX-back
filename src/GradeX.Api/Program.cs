@@ -37,13 +37,22 @@ builder.Services.AddDbContext<GradeXDbContext>(
     options => options.UseSqlServer(connectionString)
 );
 
-builder.Services.AddHttpClient<IContrasenaComprometida, PwnedPasswords>(client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(10);
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GradeX", "0.1"));
-    })
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
-    .RemoveAllLoggers();
+if (builder.Configuration.GetValue("Contrasenas:PwnedPasswords:Habilitado", true))
+{
+    builder.Services.AddHttpClient<IContrasenaComprometida, PwnedPasswords>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GradeX", "0.1"));
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+        .RemoveAllLoggers();
+}
+else
+{
+    // Solo para entornos locales de prueba sin salida a Pwned Passwords.
+    // El valor predeterminado es true; producción no debe desactivarlo.
+    builder.Services.AddSingleton<IContrasenaComprometida, ContrasenaNoComprometidaLocal>();
+}
 
 builder.Services.AddScoped<IRegistroCuentaStore, RegistroCuentaStore>();
 builder.Services.AddScoped<ICredencialesStore, CredencialesStore>();
@@ -116,6 +125,8 @@ builder.Services.AddRateLimiter(options =>
     var solicitudesMinutos = builder.Configuration.GetValue("RateLimiting:Solicitudes:WindowMinutes", 60);
     var asignacionesLimite = builder.Configuration.GetValue("RateLimiting:Asignaciones:PermitLimit", 60);
     var asignacionesMinutos = builder.Configuration.GetValue("RateLimiting:Asignaciones:WindowMinutes", 60);
+    var certificadosLimite = builder.Configuration.GetValue("RateLimiting:Certificados:PermitLimit", 30);
+    var certificadosMinutos = builder.Configuration.GetValue("RateLimiting:Certificados:WindowMinutes", 1);
     var globalLimite = builder.Configuration.GetValue("RateLimiting:Global:PermitLimit", 600);
     var globalMinutos = builder.Configuration.GetValue("RateLimiting:Global:WindowMinutes", 60);
 
@@ -170,6 +181,17 @@ builder.Services.AddRateLimiter(options =>
             {
                 PermitLimit = asignacionesLimite,
                 Window = TimeSpan.FromMinutes(asignacionesMinutos),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    options.AddPolicy("certificados", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "sin-ip",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = certificadosLimite,
+                Window = TimeSpan.FromMinutes(certificadosMinutos),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));

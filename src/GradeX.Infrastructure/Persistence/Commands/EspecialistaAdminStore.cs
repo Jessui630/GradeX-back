@@ -26,7 +26,9 @@ public sealed class EspecialistaAdminStore(
 
         var cargas = await db.AsignacionEspecialista
             .AsNoTracking()
-            .Where(a => a.Activa)
+            .Where(a => a.Activa &&
+                a.IdSolicitudNavigation.IdEstadoSolicitudNavigation.Codigo !=
+                    FlujoGradeX.EstadosSolicitud.Finalizada)
             .GroupBy(a => a.IdEspecialista)
             .Select(g => new { g.Key, Total = g.Count() })
             .ToDictionaryAsync(g => g.Key, g => g.Total, cancellationToken);
@@ -92,6 +94,7 @@ public sealed class EspecialistaAdminStore(
                 EstadoOperacionAdmin.EstadoNoConfigurado,
                 Detalle: "El rol Especialista no está configurado.");
 
+        await using var transaccion = await db.Database.BeginTransactionAsync(cancellationToken);
         var especialista = new Especialistum
         {
             IdUsuario = datos.IdUsuario,
@@ -126,6 +129,7 @@ public sealed class EspecialistaAdminStore(
             "Tu perfil de especialista fue creado. El administrador revisará su estado y áreas.",
             cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
+        await transaccion.CommitAsync(cancellationToken);
 
         var creado = await ObtenerAsync(especialista.IdEspecialista, cancellationToken);
         return new ResultadoAdmin<EspecialistaAdmin>(
@@ -142,6 +146,10 @@ public sealed class EspecialistaAdminStore(
             .SingleOrDefaultAsync(e => e.IdEspecialista == idEspecialista, cancellationToken);
         if (especialista is null)
             return new ResultadoAdmin<EspecialistaAdmin>(EstadoOperacionAdmin.NoEncontrado);
+        if (datos.IdUsuario != especialista.IdUsuario)
+            return new ResultadoAdmin<EspecialistaAdmin>(
+                EstadoOperacionAdmin.DatosInvalidos, Campo: "idUsuario",
+                Detalle: "El usuario del perfil de especialista no se puede reasignar.");
 
         var validacion = await ValidarAsync(datos, idEspecialista, cancellationToken);
         if (validacion is not null)
@@ -207,7 +215,9 @@ public sealed class EspecialistaAdminStore(
             return null;
         var carga = await db.AsignacionEspecialista
             .AsNoTracking()
-            .CountAsync(a => a.IdEspecialista == idEspecialista && a.Activa, cancellationToken);
+            .CountAsync(a => a.IdEspecialista == idEspecialista && a.Activa &&
+                a.IdSolicitudNavigation.IdEstadoSolicitudNavigation.Codigo !=
+                    FlujoGradeX.EstadosSolicitud.Finalizada, cancellationToken);
         return Mapear(especialista, carga);
     }
 

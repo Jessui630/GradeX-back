@@ -94,8 +94,7 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
         var puedeEmitir = solicitud.Evaluacion is not null &&
             solicitud.Evaluacion.FechaFin is not null &&
             !string.IsNullOrWhiteSpace(solicitud.Evaluacion.Dictamen) &&
-            solicitud.Evaluacion.Certificado is null &&
-            CriteriosObligatoriosCompletos(criterios, evaluacion);
+            solicitud.Evaluacion.Certificado is null;
 
         return new AsignacionEspecialistaDetalle(
             solicitud.IdSolicitud,
@@ -189,10 +188,12 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
         if (solicitud is null)
             return new ResultadoOperacionEspecialista(
                 EstadoOperacionEvaluacion.AsignacionNoEncontrada);
-        if (solicitud.EstadoCodigo == FlujoGradeX.EstadosSolicitud.Finalizada)
+        if (solicitud.EstadoCodigo is not (
+                FlujoGradeX.EstadosSolicitud.Asignada or
+                FlujoGradeX.EstadosSolicitud.EnEvaluacion))
             return new ResultadoOperacionEspecialista(
                 EstadoOperacionEvaluacion.EstadoInvalido, Detalle:
-                "La evaluación ya está finalizada.");
+                "La solicitud no admite una nueva solicitud de evidencia en su estado actual.");
 
         string? tipoNombre = null;
         if (datos.IdTipoEvidencia is > 0)
@@ -221,6 +222,7 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
         var mensaje = tipoNombre is null
             ? descripcion
             : $"{descripcion} Tipo solicitado: {tipoNombre}.";
+        await using var transaccion = await db.Database.BeginTransactionAsync(cancellationToken);
         await notificaciones.CrearAsync(
             solicitud.IdSolicitante,
             solicitud.IdSolicitud,
@@ -238,10 +240,15 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
                 cancellationToken);
 
         if (actualizadas == 0)
+        {
+            await transaccion.RollbackAsync(cancellationToken);
+            db.ChangeTracker.Clear();
             return new ResultadoOperacionEspecialista(
                 EstadoOperacionEvaluacion.ConflictoConcurrente);
+        }
 
         await db.SaveChangesAsync(cancellationToken);
+        await transaccion.CommitAsync(cancellationToken);
         return new ResultadoOperacionEspecialista(EstadoOperacionEvaluacion.Exito);
     }
 
@@ -301,6 +308,10 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
                 EstadoOperacionEvaluacion.EstadoInvalido, Detalle:
                 "La solicitud no admite cambios de evaluación en su estado actual.");
 
+        if (finalizar && datos.ConditionGrade is null)
+            return new ResultadoGuardarEvaluacion(
+                EstadoOperacionEvaluacion.DatosInvalidos, Campo: "conditionGrade",
+                Detalle: "Registra la calificación de condición antes de finalizar.");
         if (datos.ConditionGrade is < 0 or > 10)
             return new ResultadoGuardarEvaluacion(
                 EstadoOperacionEvaluacion.DatosInvalidos, Campo: "conditionGrade",
@@ -327,27 +338,37 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
         var resultados = NormalizarResultados(datos.Resultados);
         foreach (var resultado in resultados)
         {
-            if (!criteriosPorId.ContainsKey(resultado.IdCriterio))
+            if (!criteriosPorId.TryGetValue(resultado.IdCriterio, out var criterio))
                 return new ResultadoGuardarEvaluacion(
                     EstadoOperacionEvaluacion.CriterioNoPertenece, Campo:
                     $"criterios.{resultado.IdCriterio}",
                     Detalle: "El criterio no pertenece a la categoría de la solicitud.");
+
+            var errorTipo = ValidarTipoValor(criterio.TipoDato, resultado);
+            if (errorTipo is not null)
+                return new ResultadoGuardarEvaluacion(
+                    EstadoOperacionEvaluacion.DatosInvalidos,
+                    Campo: $"criterios.{resultado.IdCriterio}", Detalle: errorTipo);
         }
 
         if (finalizar)
         {
-            if (datos.Dictamen is null ||
-                !FlujoGradeX.Dictamenes.Todos.Contains(datos.Dictamen))
+            var dictamen = datos.Dictamen?.Trim().ToUpperInvariant();
+            if (dictamen is null || !FlujoGradeX.Dictamenes.Todos.Contains(dictamen))
                 return new ResultadoGuardarEvaluacion(
                     EstadoOperacionEvaluacion.DictamenInvalido, Campo: "dictamen",
                     Detalle: "Selecciona un dictamen válido.");
-            var enviados = resultados.Select(r => r.IdCriterio).ToHashSet();
+            var enviados = resultados
+                .Where(TieneValor)
+                .Select(r => r.IdCriterio)
+                .ToHashSet();
             var faltante = criterios.FirstOrDefault(c => c.Obligatorio && !enviados.Contains(c.IdCriterio));
             if (faltante is not null)
                 return new ResultadoGuardarEvaluacion(
                     EstadoOperacionEvaluacion.CriterioObligatorioFaltante,
                     Campo: $"criterios.{faltante.IdCriterio}",
                     Detalle: $"Falta el criterio obligatorio: {faltante.Nombre}.");
+            datos = datos with { Dictamen = dictamen };
         }
 
         Evaluacion evaluacion;
@@ -419,6 +440,13 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
                     return new ResultadoGuardarEvaluacion(
                         EstadoOperacionEvaluacion.EstadoNoConfigurado);
                 solicitud.IdEstadoSolicitud = estadoEvaluacion.IdEstadoSolicitud;
+                await notificaciones.CrearAsync(
+                    solicitud.IdSolicitante,
+                    solicitud.IdSolicitud,
+                    FlujoGradeX.TiposNotificacion.CambioEstado,
+                    "Evaluación iniciada",
+                    $"El especialista inició la evaluación de la solicitud {solicitud.Folio}.",
+                    cancellationToken);
             }
             solicitud.FechaUltimoCambio = DateTime.UtcNow;
         }
@@ -463,8 +491,7 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
 
     private static bool PuedeEvaluar(string estado) =>
         estado is FlujoGradeX.EstadosSolicitud.Asignada
-            or FlujoGradeX.EstadosSolicitud.EnEvaluacion
-            or FlujoGradeX.EstadosSolicitud.FaltaEvidencia;
+            or FlujoGradeX.EstadosSolicitud.EnEvaluacion;
 
     private static EvaluacionActual? MapearEvaluacion(Evaluacion? evaluacion) =>
         evaluacion is null
@@ -495,25 +522,32 @@ public sealed class EvaluacionStore(GradeXDbContext db, NotificacionWriter notif
                 certificado.IdEstadoCertificadoNavigation.Codigo,
                 certificado.IdEstadoCertificadoNavigation.Nombre);
 
-    private static bool CriteriosObligatoriosCompletos(
-        IReadOnlyList<CriterioEvaluacionResumen> criterios,
-        EvaluacionActual? evaluacion)
-    {
-        if (evaluacion is null)
-            return false;
-        var respondidos = evaluacion.Resultados
-            .Where(TieneValor)
-            .Select(r => r.IdCriterio)
-            .ToHashSet();
-        return criterios
-            .Where(c => c.Obligatorio)
-            .All(c => respondidos.Contains(c.IdCriterio));
-    }
-
-    private static bool TieneValor(ResultadoCriterioResumen resultado) =>
+    private static bool TieneValor(DatosResultadoCriterio resultado) =>
         !string.IsNullOrWhiteSpace(resultado.ValorTexto) ||
         resultado.ValorNumerico is not null ||
         resultado.ValorBooleano is not null;
+
+    private static string? ValidarTipoValor(string tipoDato, DatosResultadoCriterio resultado)
+    {
+        // Una observación sin valor no responde el criterio; se conserva para el
+        // borrador, pero no cuenta como criterio completo al finalizar.
+        if (!TieneValor(resultado))
+            return null;
+
+        return tipoDato switch
+        {
+            FlujoGradeX.TiposCriterio.Numerico or FlujoGradeX.TiposCriterio.Escala
+                when resultado.ValorNumerico is null =>
+                "El criterio requiere un valor numérico.",
+            FlujoGradeX.TiposCriterio.Texto
+                when string.IsNullOrWhiteSpace(resultado.ValorTexto) =>
+                "El criterio requiere un valor de texto.",
+            FlujoGradeX.TiposCriterio.Booleano
+                when resultado.ValorBooleano is null =>
+                "El criterio requiere un valor Sí o No.",
+            _ => null
+        };
+    }
 
     private static List<DatosResultadoCriterio> NormalizarResultados(
         IReadOnlyList<DatosResultadoCriterio> resultados)

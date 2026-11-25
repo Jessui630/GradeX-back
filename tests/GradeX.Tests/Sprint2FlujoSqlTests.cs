@@ -66,6 +66,8 @@ public sealed class Sprint2FlujoSqlTests
                 .SingleAsync(e => e.Codigo == FlujoGradeX.EstadosSolicitud.PendienteAsignacion);
             var tipoEvidencia = await db.TipoEvidencia.AsNoTracking()
                 .SingleAsync(t => t.Codigo == "VISTA_GENERAL");
+            var tipoEvidenciaAdicional = await db.TipoEvidencia.AsNoTracking()
+                .SingleAsync(t => t.Codigo == "ETIQUETA");
             var solicitud = new SolicitudEvaluacion
             {
                 Folio = $"SOL-S2-{sufijo}",
@@ -145,6 +147,13 @@ public sealed class Sprint2FlujoSqlTests
                 await EstadoSolicitudAsync(db, solicitud.IdSolicitud));
             db.ChangeTracker.Clear();
 
+            var bloqueada = await evaluacionStore.GuardarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosGuardarEvaluacion(8.5m, 92.5m, "Intento durante falta de evidencia", []),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.EstadoInvalido, bloqueada.Estado);
+            db.ChangeTracker.Clear();
+
             var notificacionSolicitud = await db.Notificacions.AsNoTracking()
                 .Where(n => n.IdSolicitud == solicitud.IdSolicitud &&
                     n.IdUsuario == idSolicitante &&
@@ -154,13 +163,26 @@ public sealed class Sprint2FlujoSqlTests
             Assert.Contains("etiqueta", notificacionSolicitud.Mensaje);
 
             var solicitudStore = new SolicitudStore(db);
-            var evidenciaAdicional = await solicitudStore.AgregarEvidenciaAsync(
+            var evidenciaMismoTipo = await solicitudStore.AgregarEvidenciaAsync(
                 solicitud.IdSolicitud, idSolicitante, tipoEvidencia.IdTipoEvidencia,
+                "2026/11/evidencia-s2-reemplazo.png", "evidencia-s2-reemplazo.png",
+                "image/png", 120, new string('C', 64), "Intento de reemplazo",
+                CancellationToken.None);
+            Assert.Equal(GradeX.Application.Solicitudes.EstadoAgregarEvidencia.LimiteAlcanzado,
+                evidenciaMismoTipo.Estado);
+            Assert.True(await db.Evidencia.AsNoTracking()
+                .AnyAsync(e => e.IdSolicitud == solicitud.IdSolicitud &&
+                    e.IdTipoEvidencia == tipoEvidencia.IdTipoEvidencia && e.Activa));
+
+            var evidenciaAdicional = await solicitudStore.AgregarEvidenciaAsync(
+                solicitud.IdSolicitud, idSolicitante, tipoEvidenciaAdicional.IdTipoEvidencia,
                 "2026/11/evidencia-s2-adicional.png", "evidencia-s2-adicional.png",
                 "image/png", 120, new string('B', 64), "Etiqueta adicional",
                 CancellationToken.None);
             Assert.Equal(GradeX.Application.Solicitudes.EstadoAgregarEvidencia.Exito,
                 evidenciaAdicional.Estado);
+            Assert.Equal(2, await db.Evidencia.AsNoTracking()
+                .CountAsync(e => e.IdSolicitud == solicitud.IdSolicitud && e.Activa));
             Assert.Equal(FlujoGradeX.EstadosSolicitud.EnEvaluacion,
                 await EstadoSolicitudAsync(db, solicitud.IdSolicitud));
             Assert.True(await db.Notificacions.AsNoTracking()
@@ -168,6 +190,31 @@ public sealed class Sprint2FlujoSqlTests
                     n.IdUsuario == idUsuarioEspecialista &&
                     n.IdTipoNotificacionNavigation.Codigo ==
                         FlujoGradeX.TiposNotificacion.EvidenciaRecibida));
+
+            var sinCalificacion = await evaluacionStore.FinalizarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosFinalizarEvaluacion(FlujoGradeX.Dictamenes.Autentico,
+                    null, 95.0m, "Sin calificación",
+                    [
+                        new DatosResultadoCriterio(ids.IdCriterioNumerico, null, 9.5m, null, null),
+                        new DatosResultadoCriterio(ids.IdCriterioTexto, "Sin hallazgos", null, null, null)
+                    ]),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.DatosInvalidos, sinCalificacion.Estado);
+            Assert.Equal("conditionGrade", sinCalificacion.Campo);
+
+            var criterioSoloObservacion = await evaluacionStore.FinalizarAsync(
+                solicitud.IdSolicitud, idUsuarioEspecialista,
+                new DatosFinalizarEvaluacion(FlujoGradeX.Dictamenes.Autentico,
+                    9.0m, 95.0m, "Criterio sin valor",
+                    [
+                        new DatosResultadoCriterio(ids.IdCriterioNumerico, null, null, null,
+                            "Solo observación"),
+                        new DatosResultadoCriterio(ids.IdCriterioTexto, "Sin hallazgos", null, null, null)
+                    ]),
+                CancellationToken.None);
+            Assert.Equal(EstadoOperacionEvaluacion.CriterioObligatorioFaltante,
+                criterioSoloObservacion.Estado);
 
             var final = await evaluacionStore.FinalizarAsync(
                 solicitud.IdSolicitud, idUsuarioEspecialista,
@@ -184,23 +231,46 @@ public sealed class Sprint2FlujoSqlTests
             Assert.Equal(FlujoGradeX.EstadosSolicitud.Finalizada,
                 await EstadoSolicitudAsync(db, solicitud.IdSolicitud));
 
+            // Un cambio posterior del catálogo no debe invalidar ni reescribir
+            // el dictamen ya finalizado.
+            db.CriterioEvaluacions.Add(new CriterioEvaluacion
+            {
+                IdCategoria = ids.IdCategoria,
+                Nombre = "Criterio posterior al dictamen",
+                TipoDato = FlujoGradeX.TiposCriterio.Texto,
+                Obligatorio = true,
+                Orden = 3,
+                Activo = true
+            });
+            await db.SaveChangesAsync();
+
             var certificadoStore = new CertificadoStore(db, new NotificacionWriter(db));
             var certificado = await certificadoStore.EmitirAsync(
                 solicitud.IdSolicitud, idUsuarioEspecialista, CancellationToken.None);
             Assert.Equal(EstadoOperacionCertificado.Exito, certificado.Estado);
             Assert.NotNull(certificado.Certificado);
             Assert.StartsWith("GX-", certificado.Certificado.NumeroCertificado);
+            Assert.Equal(FlujoGradeX.Dictamenes.Autentico, certificado.Certificado.Dictamen);
+            Assert.Equal("Modelo S2", certificado.Certificado.Modelo);
+            Assert.Equal(9.0m, certificado.Certificado.ConditionGrade);
+            Assert.False(string.IsNullOrWhiteSpace(certificado.Certificado.Especialidad));
 
             var delSolicitante = await certificadoStore.ObtenerPorSolicitudAsync(
                 solicitud.IdSolicitud, idSolicitante, CancellationToken.None);
             Assert.NotNull(delSolicitante);
             Assert.Equal(certificado.Certificado.IdCertificado, delSolicitante.IdCertificado);
+            Assert.Equal("Modelo S2", delSolicitante.Modelo);
+            Assert.Equal(9.0m, delSolicitante.ConditionGrade);
+            Assert.Equal(certificado.Certificado.Especialidad, delSolicitante.Especialidad);
 
             var publico = await certificadoStore.VerificarAsync(
                 certificado.Certificado.QrToken, CancellationToken.None);
             Assert.NotNull(publico);
             Assert.Equal("Producto Sprint 2", publico.NombreProducto);
+            Assert.Equal("Modelo S2", publico.Modelo);
             Assert.Equal(FlujoGradeX.Dictamenes.Autentico, publico.Dictamen);
+            Assert.Equal(9.0m, publico.ConditionGrade);
+            Assert.False(string.IsNullOrWhiteSpace(publico.Especialidad));
             Assert.DoesNotContain(correoSolicitante, publico.ToString());
             Assert.DoesNotContain(correoEspecialista, publico.ToString());
 
@@ -274,6 +344,17 @@ public sealed class Sprint2FlujoSqlTests
             CantidadMinima = 1,
             CantidadMaxima = 1,
             Orden = 1
+        });
+        var etiqueta = await db.TipoEvidencia.AsNoTracking()
+            .SingleAsync(t => t.Codigo == "ETIQUETA");
+        db.CategoriaEvidenciaRequisitos.Add(new CategoriaEvidenciaRequisito
+        {
+            IdCategoria = categoria.IdCategoria,
+            IdTipoEvidencia = etiqueta.IdTipoEvidencia,
+            Obligatorio = false,
+            CantidadMinima = 1,
+            CantidadMaxima = 1,
+            Orden = 2
         });
         var criterioNumerico = new CriterioEvaluacion
         {

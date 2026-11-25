@@ -30,6 +30,13 @@ public sealed class CertificadoStore(
             .Include(s => s.Evaluacion).ThenInclude(e => e!.ResultadoCriterios)
             .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
                 .ThenInclude(c => c!.IdEstadoCertificadoNavigation)
+            .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
+                .ThenInclude(c => c!.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.IdCategoriaNavigation)
+            .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
+                .ThenInclude(c => c!.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.CategoriaMarca)
+                .ThenInclude(cm => cm!.IdMarcaNavigation)
             .Include(s => s.Evaluacion).ThenInclude(e => e!.IdEspecialistaNavigation)
                 .ThenInclude(e => e.IdUsuarioNavigation)
             .Include(s => s.AsignacionEspecialistum)
@@ -59,21 +66,6 @@ public sealed class CertificadoStore(
                 EstadoOperacionCertificado.YaExiste,
                 Mapear(solicitud, solicitud.Evaluacion.Certificado));
 
-        var criteriosObligatorios = await db.CriterioEvaluacions
-            .AsNoTracking()
-            .Where(c => c.IdCategoria == solicitud.IdProductoNavigation.IdCategoria &&
-                c.Activo && c.Obligatorio)
-            .Select(c => c.IdCriterio)
-            .ToListAsync(cancellationToken);
-        var respondidos = solicitud.Evaluacion.ResultadoCriterios
-            .Where(TieneValor)
-            .Select(r => r.IdCriterio)
-            .ToHashSet();
-        if (criteriosObligatorios.Any(c => !respondidos.Contains(c)))
-            return new ResultadoEmitirCertificado(
-                EstadoOperacionCertificado.NoElegible,
-                Detalle: "Faltan criterios obligatorios por responder.");
-
         var estado = await db.EstadoCertificados
             .AsNoTracking()
             .SingleOrDefaultAsync(
@@ -83,21 +75,29 @@ public sealed class CertificadoStore(
             return new ResultadoEmitirCertificado(
                 EstadoOperacionCertificado.EstadoNoConfigurado);
 
-        var idEspecialidad = await db.EspecialidadEspecialista
+        // La especialidad se toma del área que habilitó la asignación. Se conserva
+        // aunque el administrador la haya desactivado después, para no reescribir
+        // el histórico del certificado.
+        var especialidad = await db.EspecialidadEspecialista
             .AsNoTracking()
+            .Include(e => e.IdCategoriaNavigation)
+            .Include(e => e.CategoriaMarca).ThenInclude(cm => cm!.IdMarcaNavigation)
             .Where(e => e.IdEspecialista == especialista.IdEspecialista &&
-                e.IdCategoria == solicitud.IdProductoNavigation.IdCategoria &&
-                e.Activa)
-            .OrderByDescending(e => e.IdMarca == solicitud.IdProductoNavigation.IdMarca)
-            .Select(e => (int?)e.IdEspecialidad)
+                e.IdCategoria == solicitud.IdProductoNavigation.IdCategoria)
+            .OrderByDescending(e => e.Activa)
+            .ThenByDescending(e => e.IdMarca == solicitud.IdProductoNavigation.IdMarca)
             .FirstOrDefaultAsync(cancellationToken);
+        if (especialidad is null)
+            return new ResultadoEmitirCertificado(
+                EstadoOperacionCertificado.NoElegible,
+                Detalle: "El especialista no tiene un área de especialidad registrada para la categoría.");
 
         var ahora = DateTime.UtcNow;
         var certificado = new Certificado
         {
             IdEvaluacion = solicitud.Evaluacion.IdEvaluacion,
             IdEstadoCertificado = estado.IdEstadoCertificado,
-            IdEspecialidad = idEspecialidad,
+            IdEspecialidad = especialidad.IdEspecialidad,
             NumeroCertificado = GenerarNumero(ahora),
             QrToken = Guid.NewGuid(),
             FechaEmision = ahora,
@@ -116,7 +116,7 @@ public sealed class CertificadoStore(
         {
             await db.SaveChangesAsync(cancellationToken);
         }
-        catch (DbUpdateException)
+        catch (DbUpdateException ex) when (EsDuplicado(ex))
         {
             db.ChangeTracker.Clear();
             return new ResultadoEmitirCertificado(
@@ -125,6 +125,7 @@ public sealed class CertificadoStore(
         }
 
         certificado.IdEstadoCertificadoNavigation = estado;
+        certificado.IdEspecialidadNavigation = especialidad;
         return new ResultadoEmitirCertificado(
             EstadoOperacionCertificado.Exito,
             Mapear(solicitud, certificado));
@@ -140,6 +141,13 @@ public sealed class CertificadoStore(
             .Include(s => s.IdProductoNavigation).ThenInclude(p => p.IdMarcaNavigation)
             .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
                 .ThenInclude(c => c!.IdEstadoCertificadoNavigation)
+            .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
+                .ThenInclude(c => c!.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.IdCategoriaNavigation)
+            .Include(s => s.Evaluacion).ThenInclude(e => e!.Certificado)
+                .ThenInclude(c => c!.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.CategoriaMarca)
+                .ThenInclude(cm => cm!.IdMarcaNavigation)
             .Include(s => s.Evaluacion).ThenInclude(e => e!.IdEspecialistaNavigation)
                 .ThenInclude(e => e.IdUsuarioNavigation)
             .Where(s => s.IdSolicitud == idSolicitud &&
@@ -150,6 +158,39 @@ public sealed class CertificadoStore(
             return null;
 
         return Mapear(solicitud, solicitud.Evaluacion.Certificado);
+    }
+
+    public async Task<IReadOnlyList<CertificadoEmitido>> ListarPorSolicitanteAsync(
+        int idUsuarioSolicitante, CancellationToken cancellationToken)
+    {
+        var certificados = await db.Certificados
+            .AsNoTracking()
+            .Include(c => c.IdEstadoCertificadoNavigation)
+            .Include(c => c.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.IdCategoriaNavigation)
+            .Include(c => c.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.CategoriaMarca)
+                .ThenInclude(cm => cm!.IdMarcaNavigation)
+            .Include(c => c.IdEvaluacionNavigation)
+                .ThenInclude(e => e.IdSolicitudNavigation)
+                .ThenInclude(s => s.IdProductoNavigation)
+                .ThenInclude(p => p.IdCategoriaNavigation)
+            .Include(c => c.IdEvaluacionNavigation)
+                .ThenInclude(e => e.IdSolicitudNavigation)
+                .ThenInclude(s => s.IdProductoNavigation)
+                .ThenInclude(p => p.IdMarcaNavigation)
+            .Include(c => c.IdEvaluacionNavigation)
+                .ThenInclude(e => e.IdEspecialistaNavigation)
+                .ThenInclude(e => e.IdUsuarioNavigation)
+            .Where(c => c.IdEvaluacionNavigation.IdSolicitudNavigation.IdSolicitante ==
+                idUsuarioSolicitante)
+            .OrderByDescending(c => c.FechaEmision)
+            .ThenByDescending(c => c.IdCertificado)
+            .ToListAsync(cancellationToken);
+
+        return certificados
+            .Select(c => Mapear(c.IdEvaluacionNavigation.IdSolicitudNavigation, c))
+            .ToList();
     }
 
     public async Task<CertificadoPublico?> VerificarAsync(
@@ -169,6 +210,11 @@ public sealed class CertificadoStore(
             .Include(c => c.IdEvaluacionNavigation)
                 .ThenInclude(e => e.IdEspecialistaNavigation)
                 .ThenInclude(e => e.IdUsuarioNavigation)
+            .Include(c => c.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.IdCategoriaNavigation)
+            .Include(c => c.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.CategoriaMarca)
+                .ThenInclude(cm => cm!.IdMarcaNavigation)
             .Where(c => c.QrToken == token)
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -196,6 +242,11 @@ public sealed class CertificadoStore(
             .Include(c => c.IdEvaluacionNavigation)
                 .ThenInclude(e => e.IdEspecialistaNavigation)
                 .ThenInclude(e => e.IdUsuarioNavigation)
+            .Include(c => c.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.IdCategoriaNavigation)
+            .Include(c => c.IdEspecialidadNavigation)
+                .ThenInclude(e => e!.CategoriaMarca)
+                .ThenInclude(cm => cm!.IdMarcaNavigation)
             .Where(c => c.NumeroCertificado == numero)
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -213,17 +264,22 @@ public sealed class CertificadoStore(
             certificado.IdEstadoCertificadoNavigation.Codigo,
             certificado.IdEstadoCertificadoNavigation.Nombre,
             producto.Nombre,
+            producto.Modelo,
             producto.IdCategoriaNavigation.Nombre,
             producto.IdMarcaNavigation?.Nombre,
             evaluacion.Dictamen,
+            evaluacion.ConditionGrade,
             certificado.FechaEmision,
             certificado.FechaVencimiento,
-            evaluacion.IdEspecialistaNavigation?.IdUsuarioNavigation?.NombreCompleto);
+            evaluacion.IdEspecialistaNavigation?.IdUsuarioNavigation?.NombreCompleto,
+            NombreEspecialidad(certificado.IdEspecialidadNavigation));
     }
 
     private static CertificadoEmitido Mapear(
-        SolicitudEvaluacion solicitud, Certificado certificado) =>
-        new(
+        SolicitudEvaluacion solicitud, Certificado certificado)
+    {
+        var evaluacion = solicitud.Evaluacion ?? certificado.IdEvaluacionNavigation;
+        return new(
             certificado.IdCertificado,
             solicitud.IdSolicitud,
             solicitud.Folio,
@@ -234,15 +290,30 @@ public sealed class CertificadoStore(
             certificado.IdEstadoCertificadoNavigation.Codigo,
             certificado.IdEstadoCertificadoNavigation.Nombre,
             solicitud.IdProductoNavigation.Nombre,
+            solicitud.IdProductoNavigation.Modelo,
             solicitud.IdProductoNavigation.IdCategoriaNavigation.Nombre,
             solicitud.IdProductoNavigation.IdMarcaNavigation?.Nombre,
-            solicitud.Evaluacion?.Dictamen,
-            solicitud.Evaluacion?.IdEspecialistaNavigation?.IdUsuarioNavigation?.NombreCompleto);
+            evaluacion?.Dictamen,
+            evaluacion?.ConditionGrade,
+            evaluacion?.IdEspecialistaNavigation?.IdUsuarioNavigation?.NombreCompleto,
+            NombreEspecialidad(certificado.IdEspecialidadNavigation));
+    }
 
-    private static bool TieneValor(ResultadoCriterio resultado) =>
-        !string.IsNullOrWhiteSpace(resultado.ValorTexto) ||
-        resultado.ValorNumerico is not null ||
-        resultado.ValorBooleano is not null;
+    private static string? NombreEspecialidad(EspecialidadEspecialistum? especialidad)
+    {
+        if (especialidad is null)
+            return null;
+        var categoria = especialidad.IdCategoriaNavigation?.Nombre;
+        var marca = especialidad.CategoriaMarca?.IdMarcaNavigation?.Nombre;
+        return string.IsNullOrWhiteSpace(marca)
+            ? categoria
+            : string.IsNullOrWhiteSpace(categoria) ? marca : $"{categoria} / {marca}";
+    }
+
+    private static bool EsDuplicado(DbUpdateException exception) =>
+        exception.InnerException is Microsoft.Data.SqlClient.SqlException sql &&
+        sql.Errors.Cast<Microsoft.Data.SqlClient.SqlError>()
+            .Any(error => error.Number is 2601 or 2627);
 
     private static string GenerarNumero(DateTime ahora) =>
         $"GX-{ahora:yyyyMMdd}-{Guid.NewGuid().ToString("N")[..8].ToUpperInvariant()}";

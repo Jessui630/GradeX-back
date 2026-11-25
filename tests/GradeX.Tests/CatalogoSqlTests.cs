@@ -77,6 +77,70 @@ public sealed class CatalogoSqlTests
     }
 
     [LocalDbFact]
+    public async Task CategoriasYMarcasInactivasNoSeOfrecenParaNuevosRegistros()
+    {
+        await using var db = await SqlIntegration.AbrirContextoAsync();
+        var sufijo = Guid.NewGuid().ToString("N")[..10];
+        var idCategoriaInactiva = 0;
+        var idCategoriaActiva = 0;
+        var idMarcaInactiva = 0;
+        try
+        {
+            var inactiva = new Categorium
+            {
+                Nombre = $"Categoria inactiva {sufijo}",
+                Activa = false
+            };
+            var activa = new Categorium
+            {
+                Nombre = $"Categoria activa {sufijo}",
+                Activa = true
+            };
+            var marca = new Marca
+            {
+                Nombre = $"Marca inactiva {sufijo}",
+                Activa = false
+            };
+            db.Categoria.AddRange(inactiva, activa);
+            db.Marcas.Add(marca);
+            await db.SaveChangesAsync();
+            idCategoriaInactiva = inactiva.IdCategoria;
+            idCategoriaActiva = activa.IdCategoria;
+            idMarcaInactiva = marca.IdMarca;
+            db.CategoriaMarcas.Add(new CategoriaMarca
+            {
+                IdCategoria = idCategoriaActiva,
+                IdMarca = idMarcaInactiva,
+                Activa = true
+            });
+            await db.SaveChangesAsync();
+
+            var store = new CatalogoProductoStore(db);
+            var categorias = await store.ListarCategoriasAsync(CancellationToken.None);
+            Assert.DoesNotContain(categorias, c => c.IdCategoria == idCategoriaInactiva);
+            Assert.Contains(categorias, c => c.IdCategoria == idCategoriaActiva);
+            Assert.Null(await store.ObtenerRequisitosAsync(
+                idCategoriaInactiva, CancellationToken.None));
+            Assert.Empty(await store.ListarMarcasAsync(
+                idCategoriaActiva, CancellationToken.None));
+        }
+        finally
+        {
+            if (idCategoriaActiva > 0)
+                await db.CategoriaMarcas
+                    .Where(cm => cm.IdCategoria == idCategoriaActiva).ExecuteDeleteAsync();
+            if (idMarcaInactiva > 0)
+                await db.Marcas.Where(m => m.IdMarca == idMarcaInactiva).ExecuteDeleteAsync();
+            if (idCategoriaInactiva > 0)
+                await db.Categoria.Where(c => c.IdCategoria == idCategoriaInactiva)
+                    .ExecuteDeleteAsync();
+            if (idCategoriaActiva > 0)
+                await db.Categoria.Where(c => c.IdCategoria == idCategoriaActiva)
+                    .ExecuteDeleteAsync();
+        }
+    }
+
+    [LocalDbFact]
     public async Task ReparacionEsIdempotenteSobreCatalogoExistente()
     {
         await using var db = await SqlIntegration.AbrirContextoAsync();

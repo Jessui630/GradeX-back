@@ -13,6 +13,9 @@ public sealed class NotificacionStore(GradeXDbContext db) : INotificacionStore
         pagina = Math.Max(1, pagina);
         tamanoPagina = Math.Clamp(tamanoPagina, 1, 50);
 
+        if (!await RecibeNotificacionesAsync(idUsuario, cancellationToken))
+            return new ListadoNotificaciones([], pagina, tamanoPagina, 0, 0);
+
         var consulta = db.Notificacions
             .AsNoTracking()
             .Where(n => n.IdUsuario == idUsuario);
@@ -45,6 +48,9 @@ public sealed class NotificacionStore(GradeXDbContext db) : INotificacionStore
     public async Task<bool> MarcarLeidaAsync(
         long idNotificacion, int idUsuario, CancellationToken cancellationToken)
     {
+        if (!await RecibeNotificacionesAsync(idUsuario, cancellationToken))
+            return false;
+
         var actualizadas = await db.Notificacions
             .Where(n => n.IdNotificacion == idNotificacion && n.IdUsuario == idUsuario)
             .ExecuteUpdateAsync(update => update
@@ -54,16 +60,34 @@ public sealed class NotificacionStore(GradeXDbContext db) : INotificacionStore
     }
 
     public async Task<int> MarcarTodasLeidasAsync(
-        int idUsuario, CancellationToken cancellationToken) =>
-        await db.Notificacions
+        int idUsuario, CancellationToken cancellationToken)
+    {
+        if (!await RecibeNotificacionesAsync(idUsuario, cancellationToken))
+            return 0;
+
+        return await db.Notificacions
             .Where(n => n.IdUsuario == idUsuario && !n.Leida)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(n => n.Leida, true)
                 .SetProperty(n => n.FechaLectura, DateTime.UtcNow), cancellationToken);
+    }
 
     public async Task<int> ContarNoLeidasAsync(
-        int idUsuario, CancellationToken cancellationToken) =>
-        await db.Notificacions
+        int idUsuario, CancellationToken cancellationToken)
+    {
+        if (!await RecibeNotificacionesAsync(idUsuario, cancellationToken))
+            return 0;
+
+        return await db.Notificacions
             .AsNoTracking()
             .CountAsync(n => n.IdUsuario == idUsuario && !n.Leida, cancellationToken);
+    }
+
+    private async Task<bool> RecibeNotificacionesAsync(
+        int idUsuario, CancellationToken cancellationToken) =>
+        await db.Usuarios
+            .AsNoTracking()
+            .Where(u => u.IdUsuario == idUsuario && u.Activo)
+            .Select(u => u.RecibirNotificaciones)
+            .SingleOrDefaultAsync(cancellationToken);
 }

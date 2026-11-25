@@ -7,7 +7,9 @@ namespace GradeX.Infrastructure.Persistence.Commands;
 
 /// <summary>
 /// Crea avisos dentro de la misma unidad de trabajo que el cambio de estado.
-/// Si el usuario desactivó las notificaciones, el cambio de negocio continúa.
+/// El registro se conserva como trazabilidad del proceso aunque el usuario haya
+/// desactivado la preferencia; la consulta de NotificacionStore aplica la
+/// preferencia para que no se muestren ni cuenten.
 /// </summary>
 public sealed class NotificacionWriter(GradeXDbContext db)
 {
@@ -22,9 +24,9 @@ public sealed class NotificacionWriter(GradeXDbContext db)
         var usuario = await db.Usuarios
             .AsNoTracking()
             .Where(u => u.IdUsuario == idUsuario)
-            .Select(u => new { u.Activo, u.RecibirNotificaciones })
+            .Select(u => new { u.Activo })
             .SingleOrDefaultAsync(cancellationToken);
-        if (usuario is null || !usuario.Activo || !usuario.RecibirNotificaciones)
+        if (usuario is null || !usuario.Activo)
             return;
 
         var idTipo = await db.TipoNotificacions

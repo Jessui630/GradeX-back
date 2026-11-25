@@ -11,22 +11,28 @@ public sealed record CertificadoEmitido(
     string EstadoCodigo,
     string EstadoNombre,
     string NombreProducto,
+    string? Modelo,
     string Categoria,
     string? Marca,
     string? Dictamen,
-    string? Especialista);
+    decimal? ConditionGrade,
+    string? Especialista,
+    string? Especialidad);
 
 public sealed record CertificadoPublico(
     string NumeroCertificado,
     string EstadoCodigo,
     string EstadoNombre,
     string NombreProducto,
+    string? Modelo,
     string Categoria,
     string? Marca,
     string? Dictamen,
+    decimal? ConditionGrade,
     DateTime FechaEmision,
     DateTime? FechaVencimiento,
-    string? Especialista);
+    string? Especialista,
+    string? Especialidad);
 
 public enum EstadoOperacionCertificado
 {
@@ -52,6 +58,9 @@ public interface ICertificadoStore
     Task<CertificadoEmitido?> ObtenerPorSolicitudAsync(
         int idSolicitud, int idUsuarioSolicitante,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<CertificadoEmitido>> ListarPorSolicitanteAsync(
+        int idUsuarioSolicitante, CancellationToken cancellationToken);
 
     Task<CertificadoPublico?> VerificarAsync(
         Guid token, CancellationToken cancellationToken);

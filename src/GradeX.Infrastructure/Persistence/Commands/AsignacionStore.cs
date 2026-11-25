@@ -29,7 +29,10 @@ public sealed class AsignacionStore : IAsignacionStore
         pagina = Math.Max(1, pagina);
         tamanoPagina = Math.Clamp(tamanoPagina, 1, 50);
 
-        var consulta = db.SolicitudEvaluacions.AsNoTracking();
+        var consulta = db.SolicitudEvaluacions
+            .AsNoTracking()
+            .Where(s => s.IdEstadoSolicitudNavigation.Codigo !=
+                FlujoGradeX.EstadosSolicitud.Borrador);
         if (!string.IsNullOrWhiteSpace(estado))
         {
             var codigo = estado.Trim().ToUpperInvariant();
@@ -69,7 +72,9 @@ public sealed class AsignacionStore : IAsignacionStore
     {
         var fila = await db.SolicitudEvaluacions
             .AsNoTracking()
-            .Where(s => s.IdSolicitud == idSolicitud)
+            .Where(s => s.IdSolicitud == idSolicitud &&
+                s.IdEstadoSolicitudNavigation.Codigo !=
+                    FlujoGradeX.EstadosSolicitud.Borrador)
             .Select(ProyeccionSolicitud())
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -106,7 +111,9 @@ public sealed class AsignacionStore : IAsignacionStore
     {
         var fila = await db.SolicitudEvaluacions
             .AsNoTracking()
-            .Where(s => s.IdSolicitud == idSolicitud)
+            .Where(s => s.IdSolicitud == idSolicitud &&
+                s.IdEstadoSolicitudNavigation.Codigo !=
+                    FlujoGradeX.EstadosSolicitud.Borrador)
             .Select(ProyeccionSolicitud())
             .SingleOrDefaultAsync(cancellationToken);
 
@@ -299,7 +306,10 @@ public sealed class AsignacionStore : IAsignacionStore
                 Categoria = e.IdCategoriaNavigation.Nombre,
                 e.IdMarca,
                 Marca = e.CategoriaMarca != null ? e.CategoriaMarca.IdMarcaNavigation.Nombre : null,
-                CargaActiva = e.IdEspecialistaNavigation.AsignacionEspecialista.Count(a => a.Activa)
+                CargaActiva = e.IdEspecialistaNavigation.AsignacionEspecialista.Count(a =>
+                    a.Activa &&
+                    a.IdSolicitudNavigation.IdEstadoSolicitudNavigation.Codigo !=
+                        FlujoGradeX.EstadosSolicitud.Finalizada)
             })
             .ToListAsync(cancellationToken);
 

@@ -140,7 +140,7 @@ sqlcmd -S sql-gradex-students.database.windows.net -d GradeX_DevCloud -G -I \
   -i docs/database/Sprint2-3-Pendientes.sql
 ```
 
-El diagnóstico previo de solo lectura es `docs/database/Diagnostico-Sprint2-3.sql`; revisa historial, estados, tipos de notificación, especialistas, asignaciones, evaluaciones y certificados. El script se probó en una base aislada desde `20261118191412_RepararCatalogoSprint1`: crea los seis estados, `EMITIDO`, los cuatro tipos de aviso y la columna de preferencia, y una segunda ejecución no duplica filas. No se aplicó en Azure.
+El diagnóstico previo de solo lectura es `docs/database/Diagnostico-Sprint2-3.sql`; revisa historial, estados, tipos de notificación, especialistas, asignaciones, evaluaciones y certificados. El script se probó en bases aisladas de `MSSQLLocalDB`: desde una base limpia aplicando las migraciones 1 a 7, y desde una base con migraciones 1 a 6 más datos sintéticos de Sprint 1. Crea los estados nuevos, `EMITIDO`, los cuatro tipos de aviso y la columna de preferencia con valor predeterminado 1; una segunda ejecución no duplica filas. No se aplicó en Azure.
 
 Los scripts de referencia del esquema histórico están en `docs/database/InitialSchema.sql` y `docs/database/RestoreCheckConstraints.sql`.
 
@@ -217,10 +217,16 @@ GET    /api/administracion/especialistas/usuarios
 POST   /api/administracion/especialistas
 PUT    /api/administracion/especialistas/{id}
 
+GET    /api/certificados
 GET    /api/certificados/solicitud/{idSolicitud}
 GET    /api/certificados/verificar/{token}
 GET    /api/certificados/verificar/numero/{numero}
 ```
+
+`GET /api/certificados` lista únicamente los certificados de las solicitudes del
+usuario autenticado. Los certificados exponen modelo, dictamen, calificación de
+condición, especialista y especialidad, y conservan el dictamen original del
+especialista, incluido `NO_AUTENTICO` o `INCONCLUSO`.
 
 Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. `Almacenamiento:Evidencias:Ruta` permite fijar una ruta explícita; si no se configura, en desarrollo se usa `App_Data/evidencias` y en App Service se usa `$HOME/data/evidencias`, que es escribible aunque `WEBSITE_RUN_FROM_PACKAGE=1` monte `wwwroot` como solo lectura. El disco de una instancia de App Service no es almacenamiento durable entre instancias; la integración con Blob Storage privado sigue pendiente de autorización de infraestructura.
 

@@ -53,7 +53,8 @@ public sealed class SesionStore(GradeXDbContext db) : ISesionStore
         var sesion = await SqlRetry.EjecutarAsync(
             ct => db.SesionUsuarios
                 .AsNoTracking()
-                .Where(s => s.TokenHash == hash && s.FechaRevocacion == null && s.FechaExpiracion > ahora)
+                .Where(s => s.TokenHash == hash && s.FechaRevocacion == null &&
+                    s.FechaExpiracion > ahora && s.IdUsuarioNavigation.Activo)
                 .Select(s => new
                 {
                     s.IdSesion,

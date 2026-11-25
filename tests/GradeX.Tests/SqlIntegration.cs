@@ -52,7 +52,22 @@ internal static class SqlIntegration
             .Select(u => u.IdUsuario).ToListAsync();
         var solicitudes = await db.SolicitudEvaluacions
             .Where(s => ids.Contains(s.IdSolicitante)).Select(s => s.IdSolicitud).ToListAsync();
+        await db.Notificacions.Where(n => ids.Contains(n.IdUsuario)).ExecuteDeleteAsync();
+        await db.Notificacions
+            .Where(n => n.IdSolicitud != null && solicitudes.Contains(n.IdSolicitud.Value))
+            .ExecuteDeleteAsync();
         await db.AsignacionEspecialista.Where(a => solicitudes.Contains(a.IdSolicitud)).ExecuteDeleteAsync();
+        var evaluaciones = await db.Evaluacions
+            .Where(e => solicitudes.Contains(e.IdSolicitud))
+            .Select(e => e.IdEvaluacion)
+            .ToListAsync();
+        if (evaluaciones.Count > 0)
+        {
+            await db.Certificados
+                .Where(c => evaluaciones.Contains(c.IdEvaluacion)).ExecuteDeleteAsync();
+            await db.ResultadoCriterios
+                .Where(r => evaluaciones.Contains(r.IdEvaluacion)).ExecuteDeleteAsync();
+        }
         await db.Evaluacions.Where(e => solicitudes.Contains(e.IdSolicitud)).ExecuteDeleteAsync();
         await db.Evidencia.Where(e => solicitudes.Contains(e.IdSolicitud)).ExecuteDeleteAsync();
         await db.SolicitudEvaluacions.Where(s => solicitudes.Contains(s.IdSolicitud)).ExecuteDeleteAsync();
