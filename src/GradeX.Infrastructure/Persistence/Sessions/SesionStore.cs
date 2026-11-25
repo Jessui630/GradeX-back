@@ -53,7 +53,8 @@ public sealed class SesionStore(GradeXDbContext db) : ISesionStore
         var sesion = await SqlRetry.EjecutarAsync(
             ct => db.SesionUsuarios
                 .AsNoTracking()
-                .Where(s => s.TokenHash == hash && s.FechaRevocacion == null && s.FechaExpiracion > ahora)
+                .Where(s => s.TokenHash == hash && s.FechaRevocacion == null &&
+                    s.FechaExpiracion > ahora && s.IdUsuarioNavigation.Activo)
                 .Select(s => new
                 {
                     s.IdSesion,
@@ -91,6 +92,19 @@ public sealed class SesionStore(GradeXDbContext db) : ISesionStore
         await db.SesionUsuarios
             .Where(s => s.TokenHash == hash && s.FechaRevocacion == null)
             .ExecuteUpdateAsync(update => update.SetProperty(s => s.FechaRevocacion, ahora), cancellationToken);
+    }
+
+    public async Task<int> EliminarTodasAsync(
+        int idUsuario, CancellationToken cancellationToken)
+    {
+        if (idUsuario <= 0)
+            return 0;
+
+        var ahora = DateTime.UtcNow;
+        return await db.SesionUsuarios
+            .Where(s => s.IdUsuario == idUsuario && s.FechaRevocacion == null)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(s => s.FechaRevocacion, ahora), cancellationToken);
     }
 
     private static string Hash(string token) =>

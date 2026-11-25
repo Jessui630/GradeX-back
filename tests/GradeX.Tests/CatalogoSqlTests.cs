@@ -42,10 +42,8 @@ public sealed class CatalogoSqlTests
 
         Assert.NotEmpty(categorias);
         foreach (var nombre in CategoriasOficiales)
-            Assert.Contains(categorias, c => c.Nombre == nombre);
-
-        foreach (var categoria in categorias)
         {
+            var categoria = Assert.Single(categorias, c => c.Nombre == nombre);
             var requisitos = await new CatalogoProductoStore(db)
                 .ObtenerRequisitosAsync(categoria.IdCategoria, CancellationToken.None);
 
@@ -76,6 +74,70 @@ public sealed class CatalogoSqlTests
             .ToListAsync();
         foreach (var codigo in TiposEvidenciaOficiales)
             Assert.Contains(codigo, tipos);
+    }
+
+    [LocalDbFact]
+    public async Task CategoriasYMarcasInactivasNoSeOfrecenParaNuevosRegistros()
+    {
+        await using var db = await SqlIntegration.AbrirContextoAsync();
+        var sufijo = Guid.NewGuid().ToString("N")[..10];
+        var idCategoriaInactiva = 0;
+        var idCategoriaActiva = 0;
+        var idMarcaInactiva = 0;
+        try
+        {
+            var inactiva = new Categorium
+            {
+                Nombre = $"Categoria inactiva {sufijo}",
+                Activa = false
+            };
+            var activa = new Categorium
+            {
+                Nombre = $"Categoria activa {sufijo}",
+                Activa = true
+            };
+            var marca = new Marca
+            {
+                Nombre = $"Marca inactiva {sufijo}",
+                Activa = false
+            };
+            db.Categoria.AddRange(inactiva, activa);
+            db.Marcas.Add(marca);
+            await db.SaveChangesAsync();
+            idCategoriaInactiva = inactiva.IdCategoria;
+            idCategoriaActiva = activa.IdCategoria;
+            idMarcaInactiva = marca.IdMarca;
+            db.CategoriaMarcas.Add(new CategoriaMarca
+            {
+                IdCategoria = idCategoriaActiva,
+                IdMarca = idMarcaInactiva,
+                Activa = true
+            });
+            await db.SaveChangesAsync();
+
+            var store = new CatalogoProductoStore(db);
+            var categorias = await store.ListarCategoriasAsync(CancellationToken.None);
+            Assert.DoesNotContain(categorias, c => c.IdCategoria == idCategoriaInactiva);
+            Assert.Contains(categorias, c => c.IdCategoria == idCategoriaActiva);
+            Assert.Null(await store.ObtenerRequisitosAsync(
+                idCategoriaInactiva, CancellationToken.None));
+            Assert.Empty(await store.ListarMarcasAsync(
+                idCategoriaActiva, CancellationToken.None));
+        }
+        finally
+        {
+            if (idCategoriaActiva > 0)
+                await db.CategoriaMarcas
+                    .Where(cm => cm.IdCategoria == idCategoriaActiva).ExecuteDeleteAsync();
+            if (idMarcaInactiva > 0)
+                await db.Marcas.Where(m => m.IdMarca == idMarcaInactiva).ExecuteDeleteAsync();
+            if (idCategoriaInactiva > 0)
+                await db.Categoria.Where(c => c.IdCategoria == idCategoriaInactiva)
+                    .ExecuteDeleteAsync();
+            if (idCategoriaActiva > 0)
+                await db.Categoria.Where(c => c.IdCategoria == idCategoriaActiva)
+                    .ExecuteDeleteAsync();
+        }
     }
 
     [LocalDbFact]
@@ -118,12 +180,19 @@ public sealed class CatalogoSqlTests
     }
 
     private static async Task<(int Categorias, int Tipos, int Campos, int Evidencias, int Estados)>
-        ContarCatalogoAsync(GradeXDbContext db) =>
-        (
-            await db.Categoria.CountAsync(),
+        ContarCatalogoAsync(GradeXDbContext db)
+    {
+        var ids = await db.Categoria
+            .AsNoTracking()
+            .Where(c => CategoriasOficiales.Contains(c.Nombre))
+            .Select(c => c.IdCategoria)
+            .ToListAsync();
+        return (
+            ids.Count,
             await db.TipoEvidencia.CountAsync(),
-            await db.CategoriaCampoRequisitos.CountAsync(),
-            await db.CategoriaEvidenciaRequisitos.CountAsync(),
+            await db.CategoriaCampoRequisitos.CountAsync(r => ids.Contains(r.IdCategoria)),
+            await db.CategoriaEvidenciaRequisitos.CountAsync(r => ids.Contains(r.IdCategoria)),
             await db.EstadoSolicituds.CountAsync()
         );
+    }
 }

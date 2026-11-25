@@ -129,6 +129,18 @@ Migraciones incluidas:
 4. `20261108214534_AddSprint1Solicitudes`: sesiones persistentes, idempotencia de solicitudes, requisitos por categoría, metadatos de evidencia y datos iniciales de catálogo/estados/tipos de evidencia.
 5. `20261111190603_SeedRolesOperativos`: siembra idempotente de los roles base `Solicitante`, `Especialista` y `Administrador`. Falla de forma explícita si `Solicitante` existe inactivo, para exigir revisión manual.
 6. `20261118191412_RepararCatalogoSprint1`: reparación idempotente del catálogo oficial. Restaura estados, tipos de evidencia, categorías y requisitos ausentes aunque la migración histórica ya esté registrada, y corrige `VISTA_GENERAL` a mínimo 1/máximo 1. No elimina catálogo ni sobrescribe requisitos personalizados.
+7. `20261118195907_Sprint2EstadosNotificaciones`: estados `ASIGNADA`, `EN_EVALUACION`, `FALTA_EVIDENCIA` y `FINALIZADA`; estado de certificado `EMITIDO`; tipos de notificación y preferencia `Usuario.RecibirNotificaciones` con valor predeterminado 1.
+
+### Migración pendiente Sprint 2-3
+
+El script versionado `docs/database/Sprint2-3-Pendientes.sql` aplica únicamente la migración `20261118195907_Sprint2EstadosNotificaciones` de forma idempotente. No elimina datos y añade la preferencia con `DEFAULT 1`. Debe ejecutarse **después** de las migraciones del Sprint 1 y solo con autorización explícita:
+
+```bash
+sqlcmd -S sql-gradex-students.database.windows.net -d GradeX_DevCloud -G -I \
+  -i docs/database/Sprint2-3-Pendientes.sql
+```
+
+El diagnóstico previo de solo lectura es `docs/database/Diagnostico-Sprint2-3.sql`; revisa historial, estados, tipos de notificación, especialistas, asignaciones, evaluaciones y certificados. El script se probó en bases aisladas de `MSSQLLocalDB`: desde una base limpia aplicando las migraciones 1 a 7, y desde una base con migraciones 1 a 6 más datos sintéticos de Sprint 1. Crea los estados nuevos, `EMITIDO`, los cuatro tipos de aviso y la columna de preferencia con valor predeterminado 1; una segunda ejecución no duplica filas. No se aplicó en Azure.
 
 Los scripts de referencia del esquema histórico están en `docs/database/InitialSchema.sql` y `docs/database/RestoreCheckConstraints.sql`.
 
@@ -165,7 +177,56 @@ POST   /api/solicitudes/{id}/evidencias
 GET    /api/solicitudes
 GET    /api/solicitudes/{id}
 GET    /api/solicitudes/{id}/evidencias/{idEvidencia}/archivo
+
+GET    /api/perfil
+PUT    /api/perfil
+PUT    /api/perfil/contrasena
+GET    /api/notificaciones
+GET    /api/notificaciones/no-leidas
+PATCH  /api/notificaciones/{id}/leida
+PATCH  /api/notificaciones/leer-todas
+
+GET    /api/especialista/asignaciones
+GET    /api/especialista/asignaciones/{id}
+PUT    /api/especialista/asignaciones/{id}/evaluacion
+POST   /api/especialista/asignaciones/{id}/dictamen
+POST   /api/especialista/asignaciones/{id}/solicitar-evidencia
+POST   /api/especialista/asignaciones/{id}/certificado
+GET    /api/especialista/asignaciones/{id}/evidencias/{idEvidencia}/archivo
+
+GET    /api/administracion/solicitudes
+GET    /api/administracion/solicitudes/{id}
+GET    /api/administracion/solicitudes/{id}/especialistas-compatibles
+POST   /api/administracion/solicitudes/{id}/asignacion
+GET    /api/administracion/catalogo/categorias
+POST   /api/administracion/catalogo/categorias
+PUT    /api/administracion/catalogo/categorias/{id}
+GET    /api/administracion/catalogo/marcas
+POST   /api/administracion/catalogo/marcas
+PUT    /api/administracion/catalogo/marcas/{id}
+GET    /api/administracion/catalogo/tipos-evidencia
+GET    /api/administracion/catalogo/categorias/{id}/marcas
+PUT    /api/administracion/catalogo/categorias/{id}/marcas/{idMarca}
+GET    /api/administracion/catalogo/categorias/{id}/requisitos
+PUT    /api/administracion/catalogo/categorias/{id}/requisitos
+GET    /api/administracion/catalogo/categorias/{id}/criterios
+POST   /api/administracion/catalogo/categorias/{id}/criterios
+PUT    /api/administracion/catalogo/criterios/{idCriterio}
+GET    /api/administracion/especialistas
+GET    /api/administracion/especialistas/usuarios
+POST   /api/administracion/especialistas
+PUT    /api/administracion/especialistas/{id}
+
+GET    /api/certificados
+GET    /api/certificados/solicitud/{idSolicitud}
+GET    /api/certificados/verificar/{token}
+GET    /api/certificados/verificar/numero/{numero}
 ```
+
+`GET /api/certificados` lista únicamente los certificados de las solicitudes del
+usuario autenticado. Los certificados exponen modelo, dictamen, calificación de
+condición, especialista y especialidad, y conservan el dictamen original del
+especialista, incluido `NO_AUTENTICO` o `INCONCLUSO`.
 
 Las operaciones de escritura autenticadas requieren la cabecera CSRF y las de creación de solicitud requieren `Idempotency-Key`. Las evidencias se guardan fuera de `wwwroot` y solo se sirven a su propietario. `Almacenamiento:Evidencias:Ruta` permite fijar una ruta explícita; si no se configura, en desarrollo se usa `App_Data/evidencias` y en App Service se usa `$HOME/data/evidencias`, que es escribible aunque `WEBSITE_RUN_FROM_PACKAGE=1` monte `wwwroot` como solo lectura. El disco de una instancia de App Service no es almacenamiento durable entre instancias; la integración con Blob Storage privado sigue pendiente de autorización de infraestructura.
 
@@ -379,3 +440,11 @@ Azure SQL Free, cuando la suscripción sea elegible, ofrece 100.000 vCore-segund
 - No operar sobre bases de producción ni sobre infraestructura de Azure desde el entorno local.
 - Mantener las migraciones históricas sin ediciones manuales.
 - Revisar el diff antes de cada commit y publicar únicamente archivos técnicos.
+
+## SonarQube Cloud, cobertura y auditoría
+
+El repositorio está vinculado a SonarQube Cloud (SonarCloud) mediante la integración de GitHub. El check `SonarCloud Code Analysis` y su Quality Gate se ejecutan sobre los PR; no se crea una instancia SonarQube Server ni se añaden servicios de pago.
+
+`scripts/quality.ps1` genera cobertura real con `coverlet.collector` en `coverage.cobertura.xml` dentro del directorio de resultados, y ejecuta `dotnet list package --vulnerable --include-transitive`. El CI publica ambos artefactos y falla si aparecen paquetes vulnerables o si no se genera cobertura. No se fija un porcentaje mínimo ni se declaran porcentajes manualmente.
+
+El análisis automático de SonarCloud no importa cobertura. Para importarla hace falta configurar el secreto `SONAR_TOKEN` y un scanner con `sonar.cs.cobertura.reportsPaths` apuntando al XML. Ese scanner debe sustituir al análisis automático, no duplicarlo. Sin token no se declara cobertura importada.

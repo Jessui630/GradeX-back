@@ -4,7 +4,13 @@ using System.Net.Http.Headers;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 using GradeX.Api.Security;
+using GradeX.Application.Administracion;
+using GradeX.Application.Asignaciones;
+using GradeX.Application.Certificados;
 using GradeX.Application.Cuentas;
+using GradeX.Application.Evaluaciones;
+using GradeX.Application.Notificaciones;
+using GradeX.Application.Perfil;
 using GradeX.Application.Productos;
 using GradeX.Application.Sesiones;
 using GradeX.Application.Solicitudes;
@@ -31,23 +37,43 @@ builder.Services.AddDbContext<GradeXDbContext>(
     options => options.UseSqlServer(connectionString)
 );
 
-builder.Services.AddHttpClient<IContrasenaComprometida, PwnedPasswords>(client =>
-    {
-        client.Timeout = TimeSpan.FromSeconds(10);
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GradeX", "0.1"));
-    })
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
-    .RemoveAllLoggers();
+if (builder.Configuration.GetValue("Contrasenas:PwnedPasswords:Habilitado", true))
+{
+    builder.Services.AddHttpClient<IContrasenaComprometida, PwnedPasswords>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(10);
+            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("GradeX", "0.1"));
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false })
+        .RemoveAllLoggers();
+}
+else
+{
+    // Solo para entornos locales de prueba sin salida a Pwned Passwords.
+    // El valor predeterminado es true; producción no debe desactivarlo.
+    builder.Services.AddSingleton<IContrasenaComprometida, ContrasenaNoComprometidaLocal>();
+}
 
 builder.Services.AddScoped<IRegistroCuentaStore, RegistroCuentaStore>();
 builder.Services.AddScoped<ICredencialesStore, CredencialesStore>();
 builder.Services.AddScoped<ICatalogoProductoStore, CatalogoProductoStore>();
 builder.Services.AddScoped<ISolicitudStore, SolicitudStore>();
+builder.Services.AddScoped<IAsignacionStore, AsignacionStore>();
+builder.Services.AddScoped<IEvaluacionStore, EvaluacionStore>();
+builder.Services.AddScoped<ICertificadoStore, CertificadoStore>();
+builder.Services.AddScoped<INotificacionStore, NotificacionStore>();
+builder.Services.AddScoped<ICatalogoAdminStore, CatalogoAdminStore>();
+builder.Services.AddScoped<IEspecialistaAdminStore, EspecialistaAdminStore>();
+builder.Services.AddScoped<IPerfilStore, PerfilStore>();
+builder.Services.AddScoped<NotificacionWriter>();
 builder.Services.AddSingleton<IContrasenaHasher, ContrasenaHasher>();
 builder.Services.AddScoped<RegistrarCuenta>();
 builder.Services.AddScoped<IniciarSesion>();
 builder.Services.AddScoped<RegistrarSolicitud>();
 builder.Services.AddScoped<AgregarEvidencia>();
+builder.Services.AddScoped<AsignarEspecialista>();
+builder.Services.AddScoped<ActualizarPerfil>();
+builder.Services.AddScoped<CambiarContrasena>();
 builder.Services.AddScoped<ISesionStore, SesionStore>();
 var rutaEvidencias = EvidenciaStoragePath.Resolver(
     builder.Configuration.GetValue<string>("Almacenamiento:Evidencias:Ruta"),
@@ -97,6 +123,10 @@ builder.Services.AddRateLimiter(options =>
     var loginMinutos = builder.Configuration.GetValue("RateLimiting:Login:WindowMinutes", 10);
     var solicitudesLimite = builder.Configuration.GetValue("RateLimiting:Solicitudes:PermitLimit", 120);
     var solicitudesMinutos = builder.Configuration.GetValue("RateLimiting:Solicitudes:WindowMinutes", 60);
+    var asignacionesLimite = builder.Configuration.GetValue("RateLimiting:Asignaciones:PermitLimit", 60);
+    var asignacionesMinutos = builder.Configuration.GetValue("RateLimiting:Asignaciones:WindowMinutes", 60);
+    var certificadosLimite = builder.Configuration.GetValue("RateLimiting:Certificados:PermitLimit", 30);
+    var certificadosMinutos = builder.Configuration.GetValue("RateLimiting:Certificados:WindowMinutes", 1);
     var globalLimite = builder.Configuration.GetValue("RateLimiting:Global:PermitLimit", 600);
     var globalMinutos = builder.Configuration.GetValue("RateLimiting:Global:WindowMinutes", 60);
 
@@ -140,6 +170,28 @@ builder.Services.AddRateLimiter(options =>
             {
                 PermitLimit = solicitudesLimite,
                 Window = TimeSpan.FromMinutes(solicitudesMinutos),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    options.AddPolicy("asignaciones", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            ClaveParticion(context),
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = asignacionesLimite,
+                Window = TimeSpan.FromMinutes(asignacionesMinutos),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    options.AddPolicy("certificados", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "sin-ip",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = certificadosLimite,
+                Window = TimeSpan.FromMinutes(certificadosMinutos),
                 QueueLimit = 0,
                 AutoReplenishment = true
             }));

@@ -38,4 +38,15 @@ internal sealed class InMemorySesionStore : ISesionStore
             sesiones.TryRemove(token, out _);
         return Task.CompletedTask;
     }
+
+    public Task<int> EliminarTodasAsync(int idUsuario, CancellationToken cancellationToken)
+    {
+        var tokens = sesiones
+            .Where(par => par.Value.IdUsuario == idUsuario)
+            .Select(par => par.Key)
+            .ToList();
+        foreach (var token in tokens)
+            sesiones.TryRemove(token, out _);
+        return Task.FromResult(tokens.Count);
+    }
 }
