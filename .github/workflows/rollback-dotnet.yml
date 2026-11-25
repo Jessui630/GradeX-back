@@ -35,8 +35,19 @@ env:
   DEPLOY_WORKFLOW_NAME: 'Deploy GradeX.Api to Azure App Service (manual)'
 
 jobs:
+  guard:
+    name: Require main rollback branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject rollback outside main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::La reversión solo se autoriza desde main. Referencia recibida: $GITHUB_REF."
+          exit 1
+
   rollback:
-    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'ROLLBACK' }}
+    needs: guard
+    if: ${{ github.ref == 'refs/heads/main' && inputs.confirm == 'ROLLBACK' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: production
@@ -80,8 +91,8 @@ jobs:
             echo "::error::El run no pertenece al workflow de despliegue esperado: $workflow_name" >&2
             exit 1
           fi
-          if [ "$head_branch" != "release" ]; then
-            echo "::error::El artifact debe provenir de la rama release: $head_branch" >&2
+          if [ "$head_branch" != "main" ]; then
+            echo "::error::El artifact debe provenir de la rama main: $head_branch" >&2
             exit 1
           fi
           if [ "$event_name" != "workflow_dispatch" ]; then
@@ -112,7 +123,18 @@ jobs:
       - name: Checkout workflow actions and verifier
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert main-only publication
+        shell: bash
+        run: bash scripts/assert-main-publication.sh
+
+      - name: Assert rollback source commit belongs to main
+        shell: bash
+        env:
+          PUBLICATION_SHA: ${{ steps.source.outputs.head_sha }}
+        run: bash scripts/assert-main-publication.sh
 
       - name: Validate target constants and OIDC variables
         shell: bash
@@ -169,7 +191,7 @@ jobs:
           EXPECTED_LOCATION: ${{ env.AZURE_LOCATION }}
           EXPECTED_RUNTIME: ${{ env.AZURE_RUNTIME }}
           EXPECTED_WORKFLOW: ${{ env.DEPLOY_WORKFLOW_NAME }}
-          EXPECTED_REF: refs/heads/release
+          EXPECTED_REF: refs/heads/main
           EXPECTED_COMMIT: ${{ steps.source.outputs.head_sha }}
           EXPECTED_RUN_ID: ${{ inputs.run_id }}
           EXPECTED_RUN_ATTEMPT: ${{ steps.source.outputs.run_attempt }}

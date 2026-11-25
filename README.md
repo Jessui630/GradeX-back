@@ -252,7 +252,7 @@ La reparación no elimina datos y está respaldada por los mismos requisitos de 
 
 ### Publicación del registro en producción
 
-La release desplegada antes de este cambio no contiene el Sprint 1 y responde `404` en `POST /api/cuentas`; el frontend muestra el mensaje genérico porque no recibe un `ProblemDetails`. Para publicar el registro real:
+La versión desplegada antes de este cambio no contiene el Sprint 1 y responde `404` en `POST /api/cuentas`; el frontend muestra el mensaje genérico porque no recibe un `ProblemDetails`. Para publicar el registro real:
 
 1. Autorizar y aplicar en Azure SQL las migraciones pendientes, sin ejecutar `Down` ni recrear la base. El script idempotente se genera con:
 
@@ -267,7 +267,7 @@ La release desplegada antes de este cambio no contiene el Sprint 1 y responde `4
 
    El script crea `SesionUsuario`, los requisitos por categoría, las columnas de idempotencia/evidencia y siembra los roles base. Incluye `SET QUOTED_IDENTIFIER ON` porque el índice filtrado `UQ_Solicitud_Idempotencia` lo exige. No elimina datos. Si la migración ya estaba registrada pero el catálogo quedó vacío, ejecutar además `docs/database/Reparar-Catalogo-Sprint1.sql` con autorización.
 
-2. Promover el código con Sprint 1 a `release` y ejecutar el workflow manual existente `Deploy GradeX.Api to Azure App Service (manual)` con `DEPLOY`. El smoke posterior comprueba `/api/health`, `/api/sesiones/csrf` y que `POST /api/cuentas` exista y responda `400` ante un cuerpo vacío, sin crear cuentas.
+2. Promover el código con Sprint 1 a `main` después de validarlo en `release` y ejecutar el workflow manual existente `Deploy GradeX.Api to Azure App Service (manual)` con `DEPLOY`. El smoke posterior comprueba `/api/health`, `/api/sesiones/csrf` y que `POST /api/cuentas` exista y responda `400` ante un cuerpo vacío, sin crear cuentas.
 3. Verificar `GET /api/health`, `GET /api/sesiones/csrf` y `POST /api/cuentas` desde el host público.
 4. Confirmar con el diagnóstico de solo lectura que hay 8 categorías activas y que `VISTA_GENERAL` tiene máximo 1.
 5. Probar un registro sintético autorizado y confirmar el alta en `Usuario`, el vínculo `UsuarioRol` y el inicio de sesión. Recorrer Categoría → Producto → Evidencias → Revisión → Envío → Mis solicitudes → Detalle y comprobar que la evidencia se puede volver a descargar. Eliminar la cuenta sintética y sus datos al terminar con el procedimiento SQL autorizado.
@@ -316,13 +316,15 @@ No se desactiva el análisis global ni se excluyen carpetas completas.
 
 `.github/workflows/quality.yml` se ejecuta en `push`, `pull_request` y `workflow_dispatch`. Usa el SDK seleccionado por `global.json`, no necesita LocalDB ni secretos personalizados, aplica el gate estricto y publica logs, SARIF y TRX como artefactos. También expone `workflow_call` para que otros flujos reutilicen el mismo gate sin duplicar comprobaciones.
 
-`.github/workflows/deploy-dotnet.yml` es un flujo manual (`workflow_dispatch`) que reutiliza la calidad, publica `GradeX.Api` en Release, genera `gradex-api.zip`, su SHA-256 y un manifiesto, y solo despliega tras una confirmación explícita en la rama `release`. No crea recursos de Azure ni cambia su configuración: únicamente valida el destino, publica el ZIP en `GradeX-api` y lo reinicia.
+La publicación sigue la política `develop` → `release` → `main`: `develop` integra y prueba, `release` prepara y valida la versión, y solo `main` autoriza producción. Ningún workflow despliega desde `develop`, `release` ni una rama `feature/**`. Los flujos de publicación comprueban la referencia y que el commit pertenezca al historial de `main` mediante `scripts/assert-main-publication.sh`; el environment `production` añade la aprobación humana cuando sus reglas están configuradas.
 
-`.github/workflows/rollback-dotnet.yml` es un flujo manual que valida el run de origen, recupera el artefacto `gradex-api` con su checksum y manifiesto, repite el preflight y lo vuelve a desplegar. La reversión no se ejecuta automáticamente.
+`.github/workflows/deploy-dotnet.yml` es un flujo manual (`workflow_dispatch`) que reutiliza la calidad, publica `GradeX.Api` en Release, genera `gradex-api.zip`, su SHA-256 y un manifiesto, y solo despliega desde `main` tras la confirmación `DEPLOY` y la aprobación del environment. Rechaza otras referencias y commits que no pertenezcan a `main`, incluso dentro de los jobs `package` y `deploy`. No crea recursos de Azure ni cambia su configuración: únicamente valida el destino, publica el ZIP en `GradeX-api` y lo reinicia.
 
-`.github/workflows/verify-dotnet.yml` es un flujo manual **solo lectura** que ejecuta el preflight sin desplegar. Se lanza sobre `release` con la confirmación `VERIFY`; usa OIDC y el environment `production`, pero no reinicia ni modifica Azure. Sirve para comprobar runtime, SKU, modelo Code, identidad, settings, HTTPS y firewall antes del primer despliegue. No imprime la cadena de conexión ni IDs de suscripción/tenant.
+`.github/workflows/rollback-dotnet.yml` es un flujo manual que solo se ejecuta desde `main`, valida que el run de origen sea un despliegue `workflow_dispatch` exitoso de `main`, recupera el artefacto `gradex-api` con su checksum y manifiesto, comprueba que el commit de origen pertenece a `main`, repite el preflight y lo vuelve a desplegar. La reversión no se ejecuta automáticamente.
 
-`.github/workflows/deploy.yml` conserva el flujo heredado de construcción y publicación de la imagen del backend. No se modifica desde el flujo de calidad; no despliega en Azure y no se usa para `GradeX-api`.
+`.github/workflows/verify-dotnet.yml` es un flujo manual **solo lectura** que ejecuta el preflight sin desplegar. Se lanza sobre `main` con la confirmación `VERIFY`; usa OIDC y el environment `production`, pero no reinicia ni modifica Azure. Sirve para comprobar runtime, SKU, modelo Code, identidad, settings, HTTPS y firewall antes del primer despliegue. No imprime la cadena de conexión ni IDs de suscripción/tenant.
+
+`.github/workflows/deploy.yml` conserva el flujo heredado de construcción y publicación de la imagen Go en GHCR disparado por la rama `Sprint1`. No despliega en Azure, no se usa para `GradeX-api` y su retiro requiere una decisión separada.
 
 ## Despliegue manual en Azure App Service
 
@@ -390,7 +392,9 @@ La autenticación con Azure usa OIDC y variables de repositorio, sin secretos de
 | `AZURE_CLIENT_ID` | Variable | App registration / federated credential. |
 | `AZURE_TENANT_ID` | Variable | Tenant de Entra ID. |
 | `AZURE_SUBSCRIPTION_ID` | Variable | Suscripción del plan y la base. |
-| `production` | Environment | Política de rama `release`; configurar revisores obligatorios si están disponibles. |
+| `production` | Environment | Política de rama `main` y revisores obligatorios. Sin esa política, GitHub no autoriza el job de despliegue. |
+
+El environment existente debe cambiarse de su política actual a `main` y añadir revisores obligatorios; los workflows no modifican esa configuración. Verificar que la credencial federada use el sujeto `repo:Jessui630/GradeX-back:environment:production` antes de publicar.
 
 La credencial federada debe ser exactamente `repo:Jessui630/GradeX-back:environment:production`, con emisor `https://token.actions.githubusercontent.com` y audiencia `api://AzureADTokenExchange`. El rol mínimo previsto es `Website Contributor` sobre `GradeX-api` y `Reader` sobre `gradex-rg` (plan, app y firewall SQL); no se asigna `Contributor` a toda la suscripción. Verificar si el environment `production` exige revisión antes de ejecutar el job de despliegue.
 
@@ -414,7 +418,7 @@ az webapp deploy \
 
 `WEBSITE_RUN_FROM_PACKAGE=1` exige `--clean false`; usar `--clean true` sería incoherente con el paquete montado. Después del despliegue se comprueba `https://<host>/api/health` sin seguir redirecciones y se valida el contrato `status=ok`, `application=GradeX API`, `version=0.1.0`. Si el smoke falla, no hay rollback automático ni existe un recurso Go al que volver.
 
-La reversión se ejecuta manualmente con `Rollback GradeX.Api (manual)` sobre `release`, el `run_id` de un despliegue **.NET anterior exitoso** y la confirmación `ROLLBACK`. El primer despliegue no tiene una versión .NET anterior: si falla, se corrige y se reintenta; no se vuelve a Go ni a un recurso eliminado. El ZIP inicial validado se conserva como baseline offline, pero no tiene manifiesto y no es aceptado por el workflow de rollback. Tras el primer despliegue exitoso, el artifact del run (con manifiesto) y los siguientes pueden usarse como origen de rollback. El workflow valida que el run de origen sea `workflow_dispatch`, de la rama `release`, del workflow de despliegue, con conclusión `success` y el mismo intento del artifact; descarga el artifact, verifica SHA-256, manifiesto, commit, destino, runtime y contenido, repite el preflight y despliega con `--clean false`. Solo se aceptan artifacts con manifiesto; si el artifact expiró o no coincide, se detiene y se elige otro run exitoso o se reconstruye el paquete con revisión, sin saltarse el preflight.
+La reversión se ejecuta manualmente con `Rollback GradeX.Api (manual)` sobre `main`, el `run_id` de un despliegue **.NET anterior exitoso** y la confirmación `ROLLBACK`. El primer despliegue no tiene una versión .NET anterior: si falla, se corrige y se reintenta; no se vuelve a Go ni a un recurso eliminado. El ZIP inicial validado se conserva como baseline offline, pero no tiene manifiesto y no es aceptado por el workflow de rollback. Tras el primer despliegue exitoso, el artifact del run (con manifiesto) y los siguientes pueden usarse como origen de rollback. El workflow valida que el run de origen sea `workflow_dispatch`, de la rama `main`, del workflow de despliegue, con conclusión `success` y el mismo intento del artifact; además comprueba que el commit de origen pertenece a `main`. Descarga el artifact, verifica SHA-256, manifiesto, commit, destino, runtime y contenido, repite el preflight y despliega con `--clean false`. Solo se aceptan artifacts con manifiesto; si el artifact expiró o no coincide, se detiene y se elige otro run exitoso o se reconstruye el paquete con revisión, sin saltarse el preflight.
 
 La capa gratuita de App Service F1 tiene 1 GB de memoria, 1 GB de almacenamiento, 60 minutos de CPU al día, 165 MB de salida al día, una instancia compartida y no incluye Always On, slots, autoescalado, dominio personalizado ni certificado de dominio personalizado. La aplicación puede experimentar arranques en frío y debe usar el hostname HTTPS `*.azurewebsites.net`. F1 no tiene SLA; el despliegue es para demo/validación, no para producción con garantías de disponibilidad.
 
@@ -425,8 +429,8 @@ Azure SQL Free, cuando la suscripción sea elegible, ofrece 100.000 vCore-segund
 1. Confirmar que `ASP-gradexrg-8bed` es F1/Free Linux, que `GradeX-api` es Linux code-only y que el runtime es `DOTNETCORE|10.0`.
 2. Verificar que `GradeX-api` ya existe y está Running (el workflow no crea recursos), que tiene identidad `SystemAssigned` exclusiva, HTTPS Only, TLS 1.2+, HTTP/2, FTPS deshabilitado, Always On deshabilitado y los App Settings anteriores.
 3. Crear el usuario `[GradeX-api]`, asignar `db_datareader`/`db_datawriter` y añadir reglas de firewall específicas para sus IP de salida. No reutilizar ningún principal de la app eliminada.
-4. Configurar las variables OIDC, la credencial federada y el environment `production` con revisores y rama `release`. La identidad OIDC de GitHub Actions es distinta de la identidad administrada de la app.
-5. Revisar y publicar los workflows en `release` mediante el procedimiento de Git autorizado. El `release` actual (`37ed258`, commit inicial) no contiene el workflow .NET; no se puede desplegar hasta actualizarlo.
+4. Configurar las variables OIDC, la credencial federada y el environment `production` con revisores y política de rama `main`. La identidad OIDC de GitHub Actions es distinta de la identidad administrada de la app.
+5. Revisar y publicar los workflows en `main` mediante el procedimiento de Git autorizado, después de validarlos en `release`. El `release` actual (`37ed258`, commit inicial) no contiene el workflow .NET y no es una rama de publicación.
 6. Ejecutar `Verify GradeX.Api Azure configuration (manual)` con `VERIFY` para confirmar el preflight sin desplegar. Si falla, corregir identidad/settings/cadena/firewall antes de continuar.
 7. Ejecutar quality y lanzar `Deploy GradeX.Api to Azure App Service (manual)` con `DEPLOY`, aprobar el environment y verificar el smoke de `/api/health`.
 8. Conservar el ZIP inicial validado y, solo después de que el primer despliegue .NET sea exitoso, probar el rollback con ese run o con un run .NET posterior. No hay rollback a Go.
