@@ -78,6 +78,7 @@ jobs:
             /k:"Jessui630_GradeX-back" \
             /o:"jessui630" \
             /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.cs.opencover.reportsPaths="coverage/sonar/**/coverage.opencover.xml" \
             /d:sonar.token="$SONAR_TOKEN"
 
       - name: Build instrumented by SonarScanner
@@ -90,6 +91,51 @@ jobs:
             --collect:"XPlat Code Coverage" \
             --results-directory coverage/sonar \
             --logger "trx;LogFileName=tests.trx"
+
+      - name: Verify OpenCover report
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$(find coverage/sonar -name coverage.opencover.xml -print -quit)"
+          if [ -z "$report" ]; then
+            echo "::error::No se generó coverage.opencover.xml." >&2
+            exit 1
+          fi
+          python3 - "$report" <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          report = pathlib.Path(sys.argv[1])
+          root = ET.parse(report).getroot()
+          summary = root.find("Summary")
+          assert root.tag == "CoverageSession", root.tag
+          assert summary is not None, "falta Summary"
+          total = int(summary.get("numSequencePoints", "0"))
+          visited = int(summary.get("visitedSequencePoints", "0"))
+          points = len(list(root.iter("SequencePoint")))
+          assert total > 0 and visited > 0, "el reporte no contiene cobertura real"
+          assert points > 0, "el reporte no contiene SequencePoint"
+
+          repo = pathlib.Path.cwd()
+          checked = 0
+          for node in root.iter("File"):
+              full = node.get("fullPath")
+              if not full:
+                  continue
+              path = pathlib.Path(full)
+              try:
+                  relative = path.relative_to(repo)
+              except ValueError:
+                  continue
+              if "obj" in relative.parts or "bin" in relative.parts:
+                  continue
+              assert path.is_file(), f"falta el archivo fuente: {relative}"
+              checked += 1
+          assert checked > 0, "el reporte no referencia archivos fuente del repositorio"
+          print(f"OpenCover válido: {visited}/{total} puntos de secuencia, "
+                f"{points} entradas, {checked} archivos fuente")
+          PY
 
       - name: End SonarCloud analysis
         if: always() && steps.begin.outcome == 'success'
