@@ -30,13 +30,24 @@ env:
   ARTIFACT_NAME: gradex-api
 
 jobs:
+  guard:
+    name: Require main publication branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject publication outside main
+        if: github.ref != 'refs/heads/main' || github.event_name != 'workflow_dispatch'
+        run: |
+          echo "::error::La publicación solo se autoriza desde main mediante workflow_dispatch. Ref=$GITHUB_REF event=$GITHUB_EVENT_NAME."
+          exit 1
+
   quality:
-    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'DEPLOY' }}
+    needs: guard
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'DEPLOY' }}
     uses: ./.github/workflows/quality.yml
 
   package:
     needs: quality
-    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'DEPLOY' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'DEPLOY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -46,7 +57,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert main-only publication
+        shell: bash
+        run: bash scripts/assert-main-publication.sh
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -201,7 +217,7 @@ jobs:
 
   deploy:
     needs: package
-    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'DEPLOY' }}
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'DEPLOY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: production
@@ -213,7 +229,12 @@ jobs:
       - name: Checkout workflow actions and verifier
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert main-only publication
+        shell: bash
+        run: bash scripts/assert-main-publication.sh
 
       - name: Validate target constants and OIDC variables
         shell: bash

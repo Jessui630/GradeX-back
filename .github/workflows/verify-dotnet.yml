@@ -29,8 +29,19 @@ env:
   AZURE_RUNTIME: 'DOTNETCORE|10.0'
 
 jobs:
+  guard:
+    name: Require main verification branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject verification outside main
+        if: github.ref != 'refs/heads/main' || github.event_name != 'workflow_dispatch'
+        run: |
+          echo "::error::La verificación solo se autoriza desde main mediante workflow_dispatch. Ref=$GITHUB_REF event=$GITHUB_EVENT_NAME."
+          exit 1
+
   preflight:
-    if: ${{ github.ref == 'refs/heads/release' && inputs.confirm == 'VERIFY' }}
+    needs: guard
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'VERIFY' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: production
@@ -41,7 +52,12 @@ jobs:
       - name: Checkout workflow actions
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Assert main-only verification
+        shell: bash
+        run: bash scripts/assert-main-publication.sh
 
       - name: Validate target constants and OIDC variables
         shell: bash
